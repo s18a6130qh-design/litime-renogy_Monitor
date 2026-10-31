@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VanMon – LiTime + Renogy DCC</title>
+<style>
+  :root { --bg:#0e1013; --card:#181b20; --line:#2a2f37; --fg:#e8eaed; --dim:#8a919c;
+          --green:#4ade80; --yellow:#facc15; --red:#f87171; --blue:#60a5fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.4 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+         padding:12px 12px 40px; }
+  h1 { font-size:17px; margin:4px 0 10px; display:flex; justify-content:space-between; align-items:center; }
+  h1 small { color:var(--dim); font-weight:normal; font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px; margin-bottom:12px; }
+  .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .title { font-weight:600; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:999px; background:#2a2f37; color:var(--dim); }
+  .badge.ok { background:#14532d; color:var(--green); }
+  .badge.warn { background:#422006; color:var(--yellow); }
+  .badge.err { background:#450a0a; color:var(--red); }
+  button { background:var(--blue); color:#0b1220; border:0; border-radius:10px; padding:8px 14px;
+           font-size:14px; font-weight:600; }
+  button.sub { background:#2a2f37; color:var(--fg); font-weight:normal; }
+  .big { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin:4px 0 8px; }
+  .big .v { font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .big .u { font-size:14px; color:var(--dim); margin-left:2px; }
+  .bar { height:8px; background:#2a2f37; border-radius:4px; overflow:hidden; margin-bottom:10px; }
+  .bar > div { height:100%; background:var(--green); width:0; transition:width .4s; }
+  .grid { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; font-size:14px; }
+  .grid .k { color:var(--dim); }
+  .grid .v { text-align:right; font-variant-numeric:tabular-nums; }
+  .cells { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; margin-top:8px; }
+  .cells div { background:#20242b; border-radius:6px; text-align:center; font-size:13px; padding:3px 0;
+               font-variant-numeric:tabular-nums; }
+  .err { color:var(--red); font-size:12px; margin-top:6px; word-break:break-all; }
+  .alarm { color:var(--red); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  details { margin-top:8px; color:var(--dim); font-size:12px; }
+  pre { white-space:pre-wrap; word-break:break-all; font-size:11px; max-height:200px; overflow:auto; margin:6px 0 0; }
+  .note { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<h1>VanMon <small id="clock"></small></h1>
+
+<div class="card" id="lt">
+  <div class="head">
+    <span class="title">🔋 LiTime <span class="note" data-f="name"></span></span>
+    <span class="badge" data-f="status">未接続</span>
+  </div>
+  <div class="row"><button data-act="connect">接続</button></div>
+  <div data-f="body" hidden>
+    <div class="big">
+      <span><span class="v" data-f="soc">-</span><span class="u">%</span></span>
+      <span><span class="v" data-f="power">-</span><span class="u">W</span></span>
+    </div>
+    <div class="bar"><div data-f="socbar"></div></div>
+    <div class="grid">
+      <span class="k">電圧 / 電流</span><span class="v" data-f="vi">-</span>
+      <span class="k">残量</span><span class="v" data-f="ah">-</span>
+      <span class="k" data-f="etak">残り時間</span><span class="v" data-f="eta">-</span>
+      <span class="k">温度 セル / BMS</span><span class="v" data-f="temp">-</span>
+      <span class="k">セル差</span><span class="v" data-f="delta">-</span>
+      <span class="k">SOH / サイクル</span><span class="v" data-f="soh">-</span>
+      <span class="k">ヒーター / バランサ</span><span class="v" data-f="heat">-</span>
+      <span class="k">problem_code</span><span class="v" data-f="code">-</span>
+    </div>
+    <div class="cells" data-f="cells"></div>
+  </div>
+  <div class="err" data-f="error"></div>
+</div>
+
+<div class="card" id="rg">
+  <div class="head">
+    <span class="title">⚡ Renogy DCC <span class="note" data-f="name"></span></span>
+    <span class="badge" data-f="status">未接続</span>
+  </div>
+  <div class="row">
+    <button data-act="connect">接続</button>
+    <button class="sub" data-act="id">ID: <span data-f="devid">255</span></button>
+  </div>
+  <div data-f="body" hidden>
+    <div class="big">
+      <span><span class="v" data-f="chg">-</span><span class="u">A 充電</span></span>
+      <span><span class="v" data-f="state" style="font-size:20px">-</span></span>
+    </div>
+    <div class="grid">
+      <span class="k">型番</span><span class="v" data-f="model">-</span>
+      <span class="k">バッテリー電圧</span><span class="v" data-f="bv">-</span>
+      <span class="k">オルタネータ</span><span class="v" data-f="alt">-</span>
+      <span class="k">ソーラー</span><span class="v" data-f="pv">-</span>
+      <span class="k">温度 本体 / 電池</span><span class="v" data-f="temp">-</span>
+      <span class="k">本日 Ah / Wh</span><span class="v" data-f="today">-</span>
+      <span class="k">本日 Vmin / Vmax</span><span class="v" data-f="vminmax">-</span>
+      <span class="k">累計 Ah / Wh</span><span class="v" data-f="total">-</span>
+      <span class="k">電池種別</span><span class="v" data-f="btype">-</span>
+      <span class="k">アラーム</span><span class="v" data-f="alarm">-</span>
+    </div>
+  </div>
+  <div class="err" data-f="error"></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <label class="note">間隔
+      <select id="interval"><option>2</option><option selected>5</option><option>10</option><option>30</option></select> 秒
+    </label>
+    <button class="sub" id="csvbtn">CSVをコピー (<span id="csvn">0</span>行)</button>
+    <button class="sub" id="wakebtn">画面を消さない</button>
+  </div>
+  <details><summary>受信ログ（解析確認用）</summary>
+    <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
+    <pre id="log"></pre>
+  </details>
+  <p class="note">Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+</div>
+
+<script>
+// <proto> ===== プロトコル（Python版 vanmon.py と同一ロジック） =====
+const LITIME_REQUEST = new Uint8Array([0x00,0x00,0x04,0x01,0x13,0x55,0xAA,0x17]);
+
+function crc16modbus(b) {
+  let crc = 0xFFFF;
+  for (const x of b) { crc ^= x; for (let i = 0; i < 8; i++) crc = (crc & 1) ? (crc >>> 1) ^ 0xA001 : crc >>> 1; }
+  return crc;
+}
+function litimeFrameLen(buf) {
+  if (buf.length >= 1 && buf[0] !== 0) return -1;            // ゴミ → 破棄
+  if (buf.length >= 2 && buf[1] !== 0) return -1;
+  if (buf.length < 3) return 0;
+  const n = buf[2] + 4; return buf.length >= n ? n : 0;
+}
+function litimeOk(f) { let s = 0; for (let i = 0; i < f.length - 1; i++) s += f[i]; return (s & 0xFF) === f[f.length - 1]; }
+
+function modbusRequest(id, reg, words) {
+  const b = [id, 0x03, reg >> 8, reg & 0xFF, words >> 8, words & 0xFF];
+  const c = crc16modbus(b); return new Uint8Array([...b, c & 0xFF, c >> 8]);
+}
+function modbusFrameLen(buf) {
+  if (buf.length < 3) return 0;
+  if (buf[1] & 0x80) return buf.length >= 5 ? 5 : 0;
+  const n = 3 + buf[2] + 2; return buf.length >= n ? n : 0;
+}
+function modbusOk(f) { const c = crc16modbus(f.subarray(0, f.length - 2)); return (f[f.length-2] | (f[f.length-1] << 8)) === c; }
+
+function parseLitime(f) {
+  if (f.length < 100) throw new Error("LiTime frame too short " + f.length);
+  const d = new DataView(f.buffer, f.byteOffset, f.byteLength);
+  const cells = []; for (let i = 0; i < 16; i++) { const c = d.getUint16(16 + i*2, true); if (c) cells.push(c / 1000); }
+  const voltage = d.getUint16(12, true) / 1000, current = d.getInt32(48, true) / 1000;
+  const remain = d.getUint16(62, true) / 100, cap = d.getUint32(64, true) / 100;
+  let eta = null, etaKind = "";
+  if (current > 0.05 && cap) { eta = Math.max(cap - remain, 0) / current; etaKind = "満充電まで"; }
+  else if (current < -0.05) { eta = remain / -current; etaKind = "空まで"; }
+  let code = ""; for (let i = 83; i >= 76; i--) code += f[i].toString(16).padStart(2, "0");
+  return {
+    voltage, current, power: voltage * current, soc: d.getUint16(90, true), soh: d.getUint32(92, true),
+    remain_ah: remain, capacity_ah: cap, cycles: d.getUint32(96, true),
+    cell_temp: d.getInt16(52, true), bms_temp: d.getInt16(54, true), cells,
+    cell_delta_mv: cells.length ? Math.round((Math.max(...cells) - Math.min(...cells)) * 1000) : null,
+    heater: d.getUint32(68, true) !== 0, balancer: d.getUint32(84, true),
+    problem_code: code.toUpperCase(), eta_h: eta, eta_kind: etaKind,
+  };
+}
+
+const DCC_STATE = {0:"停止",1:"起動",2:"MPPT",3:"均等充電",4:"ブースト",5:"フロート",6:"電流制限",8:"オルタ直結"};
+const DCC_BTYPE = {1:"開放型鉛",2:"密閉型鉛",3:"ゲル",4:"リチウム",5:"カスタム"};
+// renogy-bt の定義を 0x0121/0x0122 の16bitに当てたもの（未検証）
+const DCC_ALARM_0121 = {11:"低温停止",10:"BMS過充電保護",9:"スターター逆接",8:"オルタ過電圧",4:"オルタ過電流",3:"コントローラ過熱2"};
+const DCC_ALARM_0122 = {12:"ソーラー逆接",9:"ソーラー過電圧",7:"ソーラー過電流",6:"バッテリー過熱",5:"コントローラ過熱",2:"バッテリー低電圧",1:"バッテリー過電圧",0:"バッテリー過放電"};
+function renogyTemp(raw) { return raw & 0x80 ? -(raw & 0x7F) : raw; }   // Rover系仕様を仮定
+
+function parseDcc(f) {
+  if (f[2] < 70) throw new Error("DCC frame too short");
+  const p = new DataView(f.buffer, f.byteOffset + 3, f[2]);
+  const r = reg => p.getUint16((reg - 0x100) * 2, false);
+  const r32 = reg => p.getUint32((reg - 0x100) * 2, false);
+  const a1 = r(0x121), a2 = r(0x122), alarms = [];
+  for (const [b, n] of Object.entries(DCC_ALARM_0121)) if ((a1 >> b) & 1) alarms.push(n);
+  for (const [b, n] of Object.entries(DCC_ALARM_0122)) if ((a2 >> b) & 1) alarms.push(n);
+  const st = r(0x120) & 0xFF;
+  return {
+    battery_soc: r(0x100), battery_voltage: r(0x101) / 10, charge_current: r(0x102) / 100,
+    controller_temp: renogyTemp(p.getUint8(6)), battery_temp: renogyTemp(p.getUint8(7)),
+    alt_voltage: r(0x104) / 10, alt_current: r(0x105) / 100, alt_power: r(0x106),
+    pv_voltage: r(0x107) / 10, pv_current: r(0x108) / 100, pv_power: r(0x109),
+    bat_vmin_today: r(0x10B) / 10, bat_vmax_today: r(0x10C) / 10,
+    ah_today: r(0x110), wh_today: r(0x112), ah_total: r32(0x117), wh_total: r32(0x11B),
+    charging_state: DCC_STATE[st] ?? `不明(${st})`,
+    alarm_raw: a1.toString(16).padStart(4,"0").toUpperCase() + "/" + a2.toString(16).padStart(4,"0").toUpperCase(),
+    alarms,
+  };
+}
+// </proto>
+
+// ===== BLE 共通 =====
+const hex = b => Array.from(b, x => x.toString(16).padStart(2, "0")).join(" ");
+const logLines = [];
+function log(s) {
+  const t = new Date().toLocaleTimeString("ja-JP");
+  logLines.push(`${t} ${s}`); if (logLines.length > 200) logLines.shift();
+  document.getElementById("log").textContent = logLines.slice(-60).join("\n");
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+class BleDev {
+  constructor(cfg) { Object.assign(this, cfg); this.buf = new Uint8Array(0); this.waiter = null; this.busy = false; this.data = null; this.updated = 0; }
+
+  async pick() {
+    this.device = await navigator.bluetooth.requestDevice({ filters: this.filters, optionalServices: this.services });
+    this.device.addEventListener("gattserverdisconnected", () => this.onDisconnect());
+    await this.connect();
+  }
+  async connect() {
+    this.setStatus("接続中", "warn");
+    const server = await this.device.gatt.connect();
+    const wsvc = await server.getPrimaryService(this.writeService);
+    this.wch = await wsvc.getCharacteristic(this.writeChar);
+    const nsvc = this.notifyService === this.writeService ? wsvc : await server.getPrimaryService(this.notifyService);
+    this.nch = await nsvc.getCharacteristic(this.notifyChar);
+    this.nch.addEventListener("characteristicvaluechanged", e => this.onNotify(e.target.value));
+    await this.nch.startNotifications();
+    this.setStatus("接続", "ok");
+    this.ui("name", this.device.name || "");
+    if (this.onConnected) await this.onConnected();
+  }
+  async onDisconnect() {
+    this.setStatus("再接続中", "warn");
+    for (let i = 0; i < 1000; i++) {
+      await sleep(Math.min(2000 * 2 ** i, 30000));
+      try { await this.connect(); return; } catch (e) { this.err(e); }
+    }
+  }
+  onNotify(dv) {
+    const chunk = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+    const nb = new Uint8Array(this.buf.length + chunk.length); nb.set(this.buf); nb.set(chunk, this.buf.length); this.buf = nb;
+    const n = this.frameLen(this.buf);
+    if (n < 0) { this.buf = new Uint8Array(0); return; }
+    if (n === 0) return;
+    const f = this.buf.slice(0, n); this.buf = new Uint8Array(0);
+    log(`${this.label} RX ${hex(f)}`);
+    if (!this.frameOk(f)) { log(`${this.label} checksum NG`); return; }
+    if (this.waiter) { this.waiter(f); this.waiter = null; }
+  }
+  async request(payload, timeout = 8000) {
+    this.buf = new Uint8Array(0);
+    const p = new Promise((res, rej) => { this.waiter = res; setTimeout(() => rej(new Error("応答なし (timeout)")), timeout); });
+    const props = this.wch.properties;
+    if (props.writeWithoutResponse && this.wch.writeValueWithoutResponse) await this.wch.writeValueWithoutResponse(payload);
+    else if (this.wch.writeValueWithResponse) await this.wch.writeValueWithResponse(payload);
+    else await this.wch.writeValue(payload);
+    return p;
+  }
+  get ready() { return this.device && this.device.gatt.connected && this.nch; }
+  async tick() {
+    if (!this.ready || this.busy) return;
+    this.busy = true;
+    try { this.data = await this.poll(); this.updated = Date.now(); this.ui("error", ""); this.render(); }
+    catch (e) { this.err(e); }
+    finally { this.busy = false; }
+  }
+  // UI helpers
+  el(f) { return document.querySelector(`#${this.id} [data-f="${f}"]`); }
+  ui(f, v) { const e = this.el(f); if (e) e.textContent = v; }
+  setStatus(t, cls) { const e = this.el("status"); e.textContent = t; e.className = "badge " + (cls || ""); }
+  err(e) { console.error(e); this.ui("error", String(e && e.message || e)); log(`${this.label} ERR ${e && e.message || e}`); }
+}
+
+const f2 = (x, n = 2) => (x == null || Number.isNaN(x)) ? "-" : Number(x).toFixed(n);
+
+const LT = new BleDev({
+  id: "lt", label: "LiTime",
+  filters: [{ namePrefix: "L-" }, { namePrefix: "LT-" }, { namePrefix: "S-" }, { namePrefix: "SS-" }, { services: [0xffe0] }],
+  services: [0xffe0],
+  writeService: 0xffe0, writeChar: 0xffe2, notifyService: 0xffe0, notifyChar: 0xffe1,
+  frameLen: litimeFrameLen, frameOk: litimeOk,
+  async poll() { return parseLitime(await this.request(LITIME_REQUEST)); },
+  render() {
+    const d = this.data; this.el("body").hidden = false;
+    this.ui("soc", d.soc); this.el("socbar").style.width = Math.min(d.soc, 100) + "%";
+    this.el("socbar").style.background = d.soc < 20 ? "var(--red)" : d.soc < 40 ? "var(--yellow)" : "var(--green)";
+    this.ui("power", f2(d.power, 0));
+    this.ui("vi", `${f2(d.voltage, 3)} V / ${f2(d.current)} A`);
+    this.ui("ah", `${f2(d.remain_ah)} / ${f2(d.capacity_ah, 0)} Ah`);
+    this.ui("etak", d.eta_kind || "残り時間");
+    this.ui("eta", d.eta_h == null ? "-" : `${Math.floor(d.eta_h)}h ${String(Math.round((d.eta_h % 1) * 60)).padStart(2, "0")}m`);
+    this.ui("temp", `${d.cell_temp} / ${d.bms_temp} ℃`);
+    this.ui("delta", `${d.cell_delta_mv ?? "-"} mV`);
+    this.ui("soh", `${d.soh} % / ${d.cycles}`);
+    this.ui("heat", `${d.heater ? "ON" : "OFF"} / ${d.balancer}`);
+    this.ui("code", d.problem_code);
+    const mx = Math.max(...d.cells), mn = Math.min(...d.cells);
+    this.el("cells").innerHTML = d.cells.map(c =>
+      `<div style="color:${c === mx && mx !== mn ? "var(--yellow)" : c === mn && mx !== mn ? "var(--blue)" : "inherit"}">${c.toFixed(3)}</div>`).join("");
+  },
+});
+
+const RG = new BleDev({
+  id: "rg", label: "Renogy", devId: 255, static: {},
+  filters: [{ namePrefix: "BT-TH" }, { namePrefix: "RNGR" }, { namePrefix: "BTRIC" }],
+  services: [0xffd0, 0xfff0],
+  writeService: 0xffd0, writeChar: 0xffd1, notifyService: 0xfff0, notifyChar: 0xfff1,
+  frameLen: modbusFrameLen, frameOk: modbusOk,
+  async read(reg, words) {
+    const f = await this.request(modbusRequest(this.devId, reg, words));
+    if (f[1] & 0x80) throw new Error(`Modbus例外 reg=0x${reg.toString(16)} code=${f[2]}（IDを変えて試す）`);
+    return f;
+  },
+  async onConnected() {
+    try {
+      let f = await this.read(0x000C, 8);
+      this.static.model = new TextDecoder().decode(f.slice(3, 19)).replace(/[\x00\s]+$/g, "").trim();
+      await sleep(300);
+      f = await this.read(0xE004, 1);
+      const t = (f[3] << 8) | f[4]; this.static.battery_type = DCC_BTYPE[t] ?? String(t);
+    } catch (e) { log("Renogy static read failed: " + e.message); }
+  },
+  async poll() { return { ...parseDcc(await this.read(0x0100, 35)), ...this.static }; },
+  render() {
+    const d = this.data; this.el("body").hidden = false;
+    this.ui("chg", f2(d.charge_current, 1)); this.ui("state", d.charging_state);
+    this.ui("model", d.model || "-"); this.ui("btype", d.battery_type || "-");
+    this.ui("bv", `${f2(d.battery_voltage, 1)} V`);
+    this.ui("alt", `${f2(d.alt_voltage, 1)} V  ${f2(d.alt_current)} A  ${d.alt_power} W`);
+    this.ui("pv", `${f2(d.pv_voltage, 1)} V  ${f2(d.pv_current)} A  ${d.pv_power} W`);
+    this.ui("temp", `${d.controller_temp} / ${d.battery_temp} ℃`);
+    this.ui("today", `${d.ah_today} / ${d.wh_today}`);
+    this.ui("vminmax", `${f2(d.bat_vmin_today, 1)} / ${f2(d.bat_vmax_today, 1)} V`);
+    this.ui("total", `${d.ah_total} / ${d.wh_total}`);
+    const a = this.el("alarm"); a.textContent = (d.alarms.length ? d.alarms.join(", ") : "なし") + ` (${d.alarm_raw})`;
+    a.className = "v" + (d.alarms.length ? " alarm" : "");
+  },
+});
+
+// ===== UI 配線 =====
+for (const dev of [LT, RG]) {
+  document.querySelector(`#${dev.id} [data-act="connect"]`).onclick = async () => {
+    if (!navigator.bluetooth) { dev.err("このブラウザは Web Bluetooth 非対応です（Bluefy で開いてください）"); return; }
+    try { await dev.pick(); dev.tick(); } catch (e) { dev.err(e); dev.setStatus("未接続"); }
+  };
+}
+const ids = [255, 1, 96, 16, 17, 32, 48, 97];
+document.querySelector('#rg [data-act="id"]').onclick = () => {
+  RG.devId = ids[(ids.indexOf(RG.devId) + 1) % ids.length]; RG.static = {};
+  RG.ui("devid", RG.devId);
+  if (RG.ready) RG.onConnected();
+};
+
+const CSV_HEAD = "time,lt_soc,lt_v,lt_a,lt_w,lt_remain_ah,lt_cell_t,lt_bms_t,lt_delta_mv,lt_code,rg_state,rg_bv,rg_a,rg_alt_v,rg_alt_a,rg_alt_w,rg_pv_v,rg_pv_a,rg_pv_w,rg_ctrl_t,rg_alarm";
+const csvRows = [];
+function addCsv() {
+  const now = Date.now(), iv = intervalMs() * 3;
+  const l = LT.data && now - LT.updated < iv ? LT.data : null, r = RG.data && now - RG.updated < iv ? RG.data : null;
+  if (!l && !r) return;
+  const L = l ? [l.soc, l.voltage, l.current, l.power.toFixed(1), l.remain_ah, l.cell_temp, l.bms_temp, l.cell_delta_mv, l.problem_code] : Array(9).fill("");
+  const R = r ? [r.charging_state, r.battery_voltage, r.charge_current, r.alt_voltage, r.alt_current, r.alt_power, r.pv_voltage, r.pv_current, r.pv_power, r.controller_temp, r.alarm_raw] : Array(11).fill("");
+  csvRows.push([new Date(now).toISOString(), ...L, ...R].join(","));
+  if (csvRows.length > 20000) csvRows.shift();
+  document.getElementById("csvn").textContent = csvRows.length;
+}
+async function copyText(t, btn) {
+  try { await navigator.clipboard.writeText(t); const o = btn.textContent; btn.textContent = "コピーしました"; setTimeout(() => btn.textContent = o, 1500); }
+  catch (e) { log("clipboard 失敗: " + e.message); }
+}
+document.getElementById("csvbtn").onclick = e => copyText([CSV_HEAD, ...csvRows].join("\n"), e.currentTarget);
+document.getElementById("logcopy").onclick = e => copyText(logLines.join("\n"), e.currentTarget);
+
+let wakeLock = null;
+document.getElementById("wakebtn").onclick = async e => {
+  try { wakeLock = await navigator.wakeLock.request("screen"); e.currentTarget.textContent = "画面ON維持中"; }
+  catch (err) { e.currentTarget.textContent = "非対応"; log("wakeLock: " + err.message); }
+};
+
+const intervalMs = () => Number(document.getElementById("interval").value) * 1000;
+(async function loop() {
+  for (;;) {
+    const t0 = Date.now();
+    await LT.tick();            // 同じBLE無線を共有するので順番に読む
+    await sleep(200);
+    await RG.tick();
+    addCsv();
+    await sleep(Math.max(intervalMs() - (Date.now() - t0), 300));
+  }
+})();
+setInterval(() => {
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString("ja-JP");
+  for (const d of [LT, RG]) if (d.updated) {
+    const s = Math.round((Date.now() - d.updated) / 1000);
+    if (d.ready) d.setStatus(s > intervalMs() / 1000 * 3 ? `更新停止 ${s}s` : `接続 ${s}s前`, s > intervalMs() / 1000 * 3 ? "err" : "ok");
+  }
+}, 1000);
+</script>
+</body>
+</html>
