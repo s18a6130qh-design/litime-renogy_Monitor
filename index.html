@@ -108,7 +108,7 @@
       <div><span class="k">充電電流</span><span class="v" data-f="chg">-</span><span class="u">A</span></div>
       <div><span class="k">本体温度</span><span class="v" data-f="tbig">-</span><span class="u">℃</span></div>
       <div><span class="k">状態</span><span class="v small" data-f="state">-</span></div>
-      <div><span class="k">発電（ソーラー＋オルタ）</span><span class="v" data-f="genw">-</span><span class="u">W</span></div>
+      <div><span class="k">発電（合計）</span><span class="v" data-f="genw">-</span><span class="u">W</span></div>
     </div>
   </div>
   <div class="err" data-f="error"></div>
@@ -121,13 +121,15 @@
     <div class="grid">
       <span class="k">型番</span><span class="v" data-f="model">-</span>
       <span class="k">バッテリー電圧</span><span class="v" data-f="bv">-</span>
-      <span class="k">発電 合計</span><span class="v" data-f="gen">-</span>
+      <span class="k">合計充電電力</span><span class="v" data-f="gen">-</span>
       <span class="k">オルタネータ</span><span class="v" data-f="alt">-</span>
       <span class="k">ソーラー</span><span class="v" data-f="pv">-</span>
       <span class="k">温度 本体 / 電池</span><span class="v" data-f="temp">-</span>
-      <span class="k">本日 Ah / Wh</span><span class="v" data-f="today">-</span>
+      <span class="k">本日 Ah / Wh(単位未確認)</span><span class="v" data-f="today">-</span>
+      <span class="k">本日 最大電流 / 電力</span><span class="v" data-f="todaymax">-</span>
       <span class="k">本日 Vmin / Vmax</span><span class="v" data-f="vminmax">-</span>
-      <span class="k">累計 Ah / Wh</span><span class="v" data-f="total">-</span>
+      <span class="k">累計 Ah / Wh(単位未確認)</span><span class="v" data-f="total">-</span>
+      <span class="k">稼働日数 / 回数</span><span class="v" data-f="days">-</span>
       <span class="k">電池種別</span><span class="v" data-f="btype">-</span>
       <span class="k">アラーム</span><span class="v" data-f="alarm">-</span>
     </div>
@@ -216,7 +218,7 @@
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v12 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v13 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -293,7 +295,7 @@ const DCC_ALARM_0122 = {12:"ソーラー逆接",9:"ソーラー過電圧",7:"ソ
 function renogyTemp(raw) { return raw & 0x80 ? -(raw & 0x7F) : raw; }   // Rover系仕様を仮定
 
 function parseDcc(f) {
-  if (f[2] < 70) throw new Error("DCC frame too short");
+  if (f[2] < 70) throw new Error("DCC frame too short");   // 0x100〜0x122 (35 word)
   const p = new DataView(f.buffer, f.byteOffset + 3, f[2]);
   const r = reg => p.getUint16((reg - 0x100) * 2, false);
   const r32 = reg => p.getUint32((reg - 0x100) * 2, false);
@@ -301,14 +303,20 @@ function parseDcc(f) {
   for (const [b, n] of Object.entries(DCC_ALARM_0121)) if ((a1 >> b) & 1) alarms.push(n);
   for (const [b, n] of Object.entries(DCC_ALARM_0122)) if ((a2 >> b) & 1) alarms.push(n);
   const st = r(0x120) & 0xFF;
+  // 位置は renogy-bt (DCChargerClient) / ard00d (bt2.py) のバイトオフセットから換算：reg = 0x100 + (offset-3)/2
+  const pvV = r(0x107) / 10, pvA = r(0x108) / 100;
   return {
     battery_soc: r(0x100), battery_voltage: r(0x101) / 10, charge_current: r(0x102) / 100,
     controller_temp: renogyTemp(p.getUint8(6)), battery_temp: renogyTemp(p.getUint8(7)),
     alt_voltage: r(0x104) / 10, alt_current: r(0x105) / 100, alt_power: r(0x106),
-    pv_voltage: r(0x107) / 10, pv_current: r(0x108) / 100, pv_power: r(0x109),
-    gen_power: r(0x106) + r(0x109),
+    pv_voltage: pvV, pv_current: pvA,
+    pv_power: Math.round(pvV * pvA),               // 0x109 はソーラー専用ではないため V×A から算出
+    gen_power: r(0x109),                           // 0x109 = 合計充電電力（実機: ソーラー0Aでもオルタと同値 → 合計と判断）
     bat_vmin_today: r(0x10B) / 10, bat_vmax_today: r(0x10C) / 10,
-    ah_today: r(0x110), wh_today: r(0x112), ah_total: r32(0x117), wh_total: r32(0x11B),
+    max_current_today: r(0x10D) / 100, max_power_today: r(0x10F),
+    ah_today: r(0x111), wh_today: r(0x113), working_days: r(0x115),
+    count_overdischarge: r(0x116), count_full: r(0x117),
+    ah_total: r32(0x118), wh_total: r32(0x11C),
     charging_state: DCC_STATE[st] ?? `不明(${st})`,
     alarm_raw: a1.toString(16).padStart(4,"0").toUpperCase() + "/" + a2.toString(16).padStart(4,"0").toUpperCase(),
     alarms,
@@ -558,13 +566,15 @@ const RG = new BleDev({
   render() {
     const d = this.data; this.el("body").hidden = false;
     this.ui("chg", f2(d.charge_current, 1)); this.ui("state", d.charging_state);
-    this.ui("tbig", d.controller_temp); this.ui("genw", d.gen_power); this.ui("gen", `${d.gen_power} W（ソーラー ${d.pv_power} + オルタ ${d.alt_power}）`);
+    this.ui("tbig", d.controller_temp); this.ui("genw", d.gen_power); this.ui("gen", `${d.gen_power} W（オルタ ${d.alt_power} / ソーラー ${d.pv_power}）`);
     this.ui("model", d.model || "-"); this.ui("btype", d.battery_type || "-");
     this.ui("bv", `${f2(d.battery_voltage, 1)} V`);
     this.ui("alt", `${f2(d.alt_voltage, 1)} V  ${f2(d.alt_current)} A  ${d.alt_power} W`);
     this.ui("pv", `${f2(d.pv_voltage, 1)} V  ${f2(d.pv_current)} A  ${d.pv_power} W`);
     this.ui("temp", `${d.controller_temp} / ${d.battery_temp} ℃`);
     this.ui("today", `${d.ah_today} / ${d.wh_today}`);
+    this.ui("todaymax", `${f2(d.max_current_today, 1)} A / ${d.max_power_today} W`);
+    this.ui("days", `${d.working_days} 日 / 満充電 ${d.count_full} 回 / 過放電 ${d.count_overdischarge} 回`);
     this.ui("vminmax", `${f2(d.bat_vmin_today, 1)} / ${f2(d.bat_vmax_today, 1)} V`);
     this.ui("total", `${d.ah_total} / ${d.wh_total}`);
     const a = this.el("alarm"); a.textContent = (d.alarms.length ? d.alarms.join(", ") : "なし") + ` (${d.alarm_raw})`;
