@@ -40,18 +40,51 @@
   details { margin-top:8px; color:var(--dim); font-size:12px; }
   pre { white-space:pre-wrap; word-break:break-all; font-size:11px; max-height:200px; overflow:auto; margin:6px 0 0; }
   .note { color:var(--dim); font-size:12px; }
+  .tbl { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; font-variant-numeric:tabular-nums; }
+  .tbl th { color:var(--dim); font-weight:normal; text-align:right; padding:2px 4px; border-bottom:1px solid var(--line); }
+  .tbl td { text-align:right; padding:3px 4px; }
+  .tbl th:first-child, .tbl td:first-child { text-align:left; }
+  .stale { opacity:.45; }
 </style>
 </head>
 <body>
 <h1>VanMon <small id="clock"></small></h1>
 
-<div class="card" id="lt">
+<div class="card" id="bank">
   <div class="head">
-    <span class="title">🔋 LiTime <span class="note" data-f="name"></span></span>
+    <span class="title">🔋 LiTime バンク（並列）</span>
+    <span class="badge" data-f="count">0台</span>
+  </div>
+  <div data-f="body" hidden>
+    <div class="big">
+      <span><span class="v" data-f="soc">-</span><span class="u">%</span></span>
+      <span><span class="v" data-f="power">-</span><span class="u">W</span></span>
+      <span><span class="v" data-f="cur" style="font-size:20px">-</span><span class="u">A</span></span>
+    </div>
+    <div class="bar"><div data-f="socbar"></div></div>
+    <div class="grid">
+      <span class="k">電圧（平均）/ 台間差</span><span class="v" data-f="v">-</span>
+      <span class="k">合計残量</span><span class="v" data-f="ah">-</span>
+      <span class="k" data-f="etak">残り時間</span><span class="v" data-f="eta">-</span>
+      <span class="k">温度 最低 / 最高</span><span class="v" data-f="temp">-</span>
+      <span class="k">最大セル差</span><span class="v" data-f="delta">-</span>
+    </div>
+    <table class="tbl" data-f="table"></table>
+  </div>
+  <div class="row" style="margin-top:8px"><button data-act="add">＋ バッテリーを接続</button></div>
+  <p class="note" style="margin:6px 0 0">1台ずつ選んで接続（最大 <span data-f="max"></span> 台）。各台の詳細は下のカード。</p>
+</div>
+
+<div id="lts"></div>
+<template id="lt-tmpl"><div class="card lt">
+  <div class="head">
+    <span class="title">🔋 #<span data-f="no"></span> <span class="note" data-f="name"></span></span>
     <span class="badge" data-f="status">未接続</span>
   </div>
-  <div class="row"><button data-act="connect">接続</button></div>
+  <div class="row"><button data-act="connect">接続</button><button class="sub" data-act="toggle">詳細</button></div>
   <div data-f="body" hidden>
+    <div class="note" data-f="summary" style="color:var(--fg)"></div>
+    <div data-f="detail" hidden>
     <div class="big">
       <span><span class="v" data-f="soc">-</span><span class="u">%</span></span>
       <span><span class="v" data-f="power">-</span><span class="u">W</span></span>
@@ -68,9 +101,10 @@
       <span class="k">problem_code</span><span class="v" data-f="code">-</span>
     </div>
     <div class="cells" data-f="cells"></div>
+    </div>
   </div>
   <div class="err" data-f="error"></div>
-</div>
+</div></template>
 
 <div class="card" id="rg">
   <div class="head">
@@ -114,7 +148,7 @@
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v2 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v3 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -293,8 +327,8 @@ class BleDev {
 
 const f2 = (x, n = 2) => (x == null || Number.isNaN(x)) ? "-" : Number(x).toFixed(n);
 
-const LT = new BleDev({
-  id: "lt", label: "LiTime",
+const N_BATT = 3;     // 並列のバッテリー台数（必要なら変更）
+const LT_CFG = {
   filters: [{ namePrefix: "L-" }, { namePrefix: "LT-" }, { namePrefix: "S-" }, { namePrefix: "SS-" }, { services: [U(0xffe0)] }],
   services: [0xffe0],
   writeService: 0xffe0, writeChar: 0xffe2, notifyService: 0xffe0, notifyChar: 0xffe1,
@@ -302,13 +336,14 @@ const LT = new BleDev({
   async poll() { return parseLitime(await this.request(LITIME_REQUEST)); },
   render() {
     const d = this.data; this.el("body").hidden = false;
+    this.ui("summary", `${d.soc}%  ${f2(d.voltage, 2)}V  ${f2(d.current)}A  ${f2(d.power, 0)}W  ${d.cell_temp}℃  Δ${d.cell_delta_mv ?? "-"}mV`);
     this.ui("soc", d.soc); this.el("socbar").style.width = Math.min(d.soc, 100) + "%";
-    this.el("socbar").style.background = d.soc < 20 ? "var(--red)" : d.soc < 40 ? "var(--yellow)" : "var(--green)";
+    this.el("socbar").style.background = socColor(d.soc);
     this.ui("power", f2(d.power, 0));
     this.ui("vi", `${f2(d.voltage, 3)} V / ${f2(d.current)} A`);
     this.ui("ah", `${f2(d.remain_ah)} / ${f2(d.capacity_ah, 0)} Ah`);
     this.ui("etak", d.eta_kind || "残り時間");
-    this.ui("eta", d.eta_h == null ? "-" : `${Math.floor(d.eta_h)}h ${String(Math.round((d.eta_h % 1) * 60)).padStart(2, "0")}m`);
+    this.ui("eta", fmtH(d.eta_h));
     this.ui("temp", `${d.cell_temp} / ${d.bms_temp} ℃`);
     this.ui("delta", `${d.cell_delta_mv ?? "-"} mV`);
     this.ui("soh", `${d.soh} % / ${d.cycles}`);
@@ -317,8 +352,72 @@ const LT = new BleDev({
     const mx = Math.max(...d.cells), mn = Math.min(...d.cells);
     this.el("cells").innerHTML = d.cells.map(c =>
       `<div style="color:${c === mx && mx !== mn ? "var(--yellow)" : c === mn && mx !== mn ? "var(--blue)" : "inherit"}">${c.toFixed(3)}</div>`).join("");
+    renderBank();
   },
-});
+};
+const socColor = soc => soc < 20 ? "var(--red)" : soc < 40 ? "var(--yellow)" : "var(--green)";
+const fmtH = h => h == null ? "-" : `${Math.floor(h)}h ${String(Math.round((h % 1) * 60)).padStart(2, "0")}m`;
+
+const LTS = [];
+const ltBox = document.getElementById("lts"), ltTmpl = document.getElementById("lt-tmpl");
+for (let i = 0; i < N_BATT; i++) {
+  const node = ltTmpl.content.firstElementChild.cloneNode(true);
+  node.id = `lt${i}`; ltBox.appendChild(node);
+  const dev = new BleDev({ ...LT_CFG, id: `lt${i}`, label: `LiTime#${i + 1}` });
+  dev.ui("no", i + 1);
+  node.querySelector('[data-act="toggle"]').onclick = () => { const e = dev.el("detail"); e.hidden = !e.hidden; };
+  LTS.push(dev);
+}
+
+// ---- バンク集計（並列：電流・電力・Ah は和、電圧は平均、SOC は残量Ah/容量Ah の和の比） ----
+function bankFresh() {
+  const lim = intervalMs() * 3, now = Date.now();
+  return LTS.filter(d => d.data && now - d.updated < lim);
+}
+function bankData() {
+  const xs = bankFresh().map(d => d.data);
+  if (!xs.length) return null;
+  const sum = k => xs.reduce((a, x) => a + x[k], 0);
+  const remain = sum("remain_ah"), cap = sum("capacity_ah"), current = sum("current");
+  const vs = xs.map(x => x.voltage), ts = xs.flatMap(x => [x.cell_temp, x.bms_temp]);
+  let eta = null, etaKind = "";
+  if (current > 0.05 && cap) { eta = Math.max(cap - remain, 0) / current; etaKind = "満充電まで"; }
+  else if (current < -0.05) { eta = remain / -current; etaKind = "空まで"; }
+  return {
+    n: xs.length, soc: cap ? remain / cap * 100 : null, remain_ah: remain, capacity_ah: cap,
+    current, power: sum("power"), voltage: vs.reduce((a, b) => a + b, 0) / vs.length,
+    v_spread_mv: Math.round((Math.max(...vs) - Math.min(...vs)) * 1000),
+    t_min: Math.min(...ts), t_max: Math.max(...ts),
+    delta_max: Math.max(...xs.map(x => x.cell_delta_mv ?? 0)), eta_h: eta, eta_kind: etaKind,
+  };
+}
+const bankEl = f => document.querySelector(`#bank [data-f="${f}"]`);
+function renderBank() {
+  const connected = LTS.filter(d => d.ready).length;
+  bankEl("count").textContent = `${connected}/${N_BATT}台`;
+  bankEl("count").className = "badge " + (connected === N_BATT ? "ok" : connected ? "warn" : "");
+  const b = bankData();
+  if (!b) return;
+  bankEl("body").hidden = false;
+  bankEl("soc").textContent = f2(b.soc, 0);
+  bankEl("socbar").style.width = Math.min(b.soc, 100) + "%"; bankEl("socbar").style.background = socColor(b.soc);
+  bankEl("power").textContent = f2(b.power, 0);
+  bankEl("cur").textContent = f2(b.current, 1);
+  bankEl("v").textContent = `${f2(b.voltage, 3)} V / ${b.v_spread_mv} mV`;
+  bankEl("ah").textContent = `${f2(b.remain_ah, 1)} / ${f2(b.capacity_ah, 0)} Ah` + (b.n < N_BATT ? `（${b.n}台分）` : "");
+  bankEl("etak").textContent = b.eta_kind || "残り時間";
+  bankEl("eta").textContent = fmtH(b.eta_h);
+  bankEl("temp").textContent = `${b.t_min} / ${b.t_max} ℃`;
+  bankEl("delta").textContent = `${b.delta_max} mV`;
+  const fresh = new Set(bankFresh());
+  bankEl("table").innerHTML = "<tr><th>#</th><th>SOC</th><th>V</th><th>A</th><th>電流比</th><th>℃</th></tr>" +
+    LTS.map((d, i) => {
+      if (!d.data) return `<tr class="stale"><td>${i + 1}</td><td colspan="5">未接続</td></tr>`;
+      const x = d.data, share = Math.abs(b.current) > 0.3 && fresh.has(d) ? `${Math.round(x.current / b.current * 100)}%` : "-";
+      return `<tr class="${fresh.has(d) ? "" : "stale"}"><td>${i + 1}</td><td>${x.soc}%</td><td>${f2(x.voltage, 2)}</td><td>${f2(x.current, 1)}</td><td>${share}</td><td>${x.cell_temp}</td></tr>`;
+    }).join("");
+}
+bankEl("max").textContent = N_BATT;
 
 const RG = new BleDev({
   id: "rg", label: "Renogy", devId: 255, static: {},
@@ -358,13 +457,20 @@ const RG = new BleDev({
 });
 
 // ===== UI 配線 =====
-for (const dev of [LT, RG]) {
-  document.querySelector(`#${dev.id} [data-act="connect"]`).onclick = async () => {
-    if (!navigator.bluetooth) { dev.err("このブラウザは Web Bluetooth 非対応です（Bluefy で開いてください）"); return; }
-    try { await dev.pick(); dev.tick(); }
-    catch (e) { dev.err(e); dev.setStatus("未接続"); document.querySelector("details").open = true; }
-  };
+async function connectDev(dev) {
+  if (!navigator.bluetooth) { dev.err("このブラウザは Web Bluetooth 非対応です（Bluefy で開いてください）"); return; }
+  try {
+    await dev.pick();
+    const dup = LTS.find(o => o !== dev && o.device && o.device.id === dev.device.id && o.ready);
+    if (dup) { dev.err(`このバッテリーは既に ${dup.label} で接続済みです`); return; }
+    dev.tick(); renderBank();
+  } catch (e) { dev.err(e); dev.setStatus("未接続"); document.querySelector("details").open = true; }
 }
+for (const dev of [...LTS, RG]) document.querySelector(`#${dev.id} [data-act="connect"]`).onclick = () => connectDev(dev);
+document.querySelector('#bank [data-act="add"]').onclick = () => {
+  const free = LTS.find(d => !d.device);
+  if (free) connectDev(free); else log("全スロット使用中。個別カードの「接続」で選び直してください");
+};
 const ids = [255, 1, 96, 16, 17, 32, 48, 97];
 document.querySelector('#rg [data-act="id"]').onclick = () => {
   RG.devId = ids[(ids.indexOf(RG.devId) + 1) % ids.length]; RG.static = {};
@@ -372,15 +478,19 @@ document.querySelector('#rg [data-act="id"]').onclick = () => {
   if (RG.ready) RG.onConnected();
 };
 
-const CSV_HEAD = "time,lt_soc,lt_v,lt_a,lt_w,lt_remain_ah,lt_cell_t,lt_bms_t,lt_delta_mv,lt_code,rg_state,rg_bv,rg_a,rg_alt_v,rg_alt_a,rg_alt_w,rg_pv_v,rg_pv_a,rg_pv_w,rg_ctrl_t,rg_alarm";
+const CSV_HEAD = "time,bank_n,bank_soc,bank_v,bank_a,bank_w,bank_remain_ah," +
+  Array.from({ length: N_BATT }, (_, i) => `b${i+1}_soc,b${i+1}_v,b${i+1}_a,b${i+1}_cell_t,b${i+1}_delta_mv,b${i+1}_code`).join(",") +
+  ",rg_state,rg_bv,rg_a,rg_alt_v,rg_alt_a,rg_alt_w,rg_pv_v,rg_pv_a,rg_pv_w,rg_ctrl_t,rg_alarm";
 const csvRows = [];
 function addCsv() {
   const now = Date.now(), iv = intervalMs() * 3;
-  const l = LT.data && now - LT.updated < iv ? LT.data : null, r = RG.data && now - RG.updated < iv ? RG.data : null;
-  if (!l && !r) return;
-  const L = l ? [l.soc, l.voltage, l.current, l.power.toFixed(1), l.remain_ah, l.cell_temp, l.bms_temp, l.cell_delta_mv, l.problem_code] : Array(9).fill("");
+  const b = bankData(), r = RG.data && now - RG.updated < iv ? RG.data : null;
+  if (!b && !r) return;
+  const B = b ? [b.n, b.soc.toFixed(1), b.voltage.toFixed(3), b.current.toFixed(2), b.power.toFixed(1), b.remain_ah.toFixed(2)] : Array(6).fill("");
+  const L = LTS.flatMap(d => { const x = d.data && now - d.updated < iv ? d.data : null;
+    return x ? [x.soc, x.voltage, x.current, x.cell_temp, x.cell_delta_mv, x.problem_code] : Array(6).fill(""); });
   const R = r ? [r.charging_state, r.battery_voltage, r.charge_current, r.alt_voltage, r.alt_current, r.alt_power, r.pv_voltage, r.pv_current, r.pv_power, r.controller_temp, r.alarm_raw] : Array(11).fill("");
-  csvRows.push([new Date(now).toISOString(), ...L, ...R].join(","));
+  csvRows.push([new Date(now).toISOString(), ...B, ...L, ...R].join(","));
   if (csvRows.length > 20000) csvRows.shift();
   document.getElementById("csvn").textContent = csvRows.length;
 }
@@ -401,16 +511,16 @@ const intervalMs = () => Number(document.getElementById("interval").value) * 100
 (async function loop() {
   for (;;) {
     const t0 = Date.now();
-    await LT.tick();            // 同じBLE無線を共有するので順番に読む
-    await sleep(200);
+    for (const d of LTS) { await d.tick(); await sleep(150); }   // 同じBLE無線を共有するので順番に読む
     await RG.tick();
+    renderBank();
     addCsv();
     await sleep(Math.max(intervalMs() - (Date.now() - t0), 300));
   }
 })();
 setInterval(() => {
   document.getElementById("clock").textContent = new Date().toLocaleTimeString("ja-JP");
-  for (const d of [LT, RG]) if (d.updated) {
+  for (const d of [...LTS, RG]) if (d.updated) {
     const s = Math.round((Date.now() - d.updated) / 1000);
     if (d.ready) d.setStatus(s > intervalMs() / 1000 * 3 ? `更新停止 ${s}s` : `接続 ${s}s前`, s > intervalMs() / 1000 * 3 ? "err" : "ok");
   }
