@@ -46,7 +46,11 @@
   .tiles .v { font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; }
   .tiles .v.small { font-size:22px; }
   .tiles .u { font-size:14px; color:var(--dim); margin-left:3px; }
-  details.card > summary { cursor:pointer; color:var(--dim); }
+  details.card > summary { cursor:pointer; color:var(--dim); list-style:none; }
+  details.card > summary::-webkit-details-marker { display:none; }
+  details.card > summary::before { content:"▶"; float:right; font-size:11px; color:var(--dim); margin:3px 0 0 8px; transition:transform .2s; }
+  details.card[open] > summary::before { transform:rotate(90deg); }
+  details.lt .head { margin-bottom:2px; }
   #ltwrap .card { margin:10px 0 0; background:#14171b; }
   .tbl { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; font-variant-numeric:tabular-nums; }
   .tbl th { color:var(--dim); font-weight:normal; text-align:right; padding:2px 4px; border-bottom:1px solid var(--line); }
@@ -57,6 +61,8 @@
 </head>
 <body>
 <h1>VanMon <small id="clock"></small></h1>
+<div class="row" style="margin-bottom:10px"><button id="allbtn">まとめて接続</button></div>
+<p class="note" id="autonote" hidden style="margin:-4px 0 10px"></p>
 
 <div class="card" id="bank">
   <div class="head">
@@ -98,11 +104,12 @@
       <div><span class="k">充電電流</span><span class="v" data-f="chg">-</span><span class="u">A</span></div>
       <div><span class="k">本体温度</span><span class="v" data-f="tbig">-</span><span class="u">℃</span></div>
       <div><span class="k">状態</span><span class="v small" data-f="state">-</span></div>
-      <div><span class="k">オルタ入力</span><span class="v" data-f="altw">-</span><span class="u">W</span></div>
+      <div><span class="k">発電（ソーラー＋オルタ）</span><span class="v" data-f="genw">-</span><span class="u">W</span></div>
     </div>
     <div class="grid">
       <span class="k">型番</span><span class="v" data-f="model">-</span>
       <span class="k">バッテリー電圧</span><span class="v" data-f="bv">-</span>
+      <span class="k">発電 合計</span><span class="v" data-f="gen">-</span>
       <span class="k">オルタネータ</span><span class="v" data-f="alt">-</span>
       <span class="k">ソーラー</span><span class="v" data-f="pv">-</span>
       <span class="k">温度 本体 / 電池</span><span class="v" data-f="temp">-</span>
@@ -121,15 +128,17 @@
   <div id="lts"></div>
 </details>
 
-<template id="lt-tmpl"><div class="card lt">
-  <div class="head">
-    <span class="title">🔋 #<span data-f="no"></span> <span class="note" data-f="name"></span></span>
-    <span class="badge" data-f="status">未接続</span>
-  </div>
-  <div class="row"><button data-act="connect">接続</button><button class="sub" data-act="toggle">詳細</button></div>
-  <div data-f="body" hidden>
+<template id="lt-tmpl"><details class="card lt">
+  <summary>
+    <div class="head">
+      <span class="title">🔋 #<span data-f="no"></span> <span class="note" data-f="name"></span></span>
+      <span class="badge" data-f="status">未接続</span>
+    </div>
     <div class="note" data-f="summary" style="color:var(--fg)"></div>
-    <div data-f="detail" hidden>
+    <div class="err" data-f="error"></div>
+  </summary>
+  <div class="row" style="margin-top:8px"><button data-act="connect">接続</button><button class="sub" data-act="forget">記憶を消す</button></div>
+  <div data-f="body" hidden>
     <div class="big">
       <span><span class="v" data-f="soc">-</span><span class="u">%</span></span>
       <span><span class="v" data-f="power">-</span><span class="u">W</span></span>
@@ -146,10 +155,8 @@
       <span class="k">problem_code</span><span class="v" data-f="code">-</span>
     </div>
     <div class="cells" data-f="cells"></div>
-    </div>
   </div>
-  <div class="err" data-f="error"></div>
-</div></template>
+</details></template>
 
 
 <div class="card">
@@ -164,7 +171,7 @@
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v4 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v5 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -237,6 +244,7 @@ function parseDcc(f) {
     controller_temp: renogyTemp(p.getUint8(6)), battery_temp: renogyTemp(p.getUint8(7)),
     alt_voltage: r(0x104) / 10, alt_current: r(0x105) / 100, alt_power: r(0x106),
     pv_voltage: r(0x107) / 10, pv_current: r(0x108) / 100, pv_power: r(0x109),
+    gen_power: r(0x106) + r(0x109),
     bat_vmin_today: r(0x10B) / 10, bat_vmax_today: r(0x10C) / 10,
     ah_today: r(0x110), wh_today: r(0x112), ah_total: r32(0x117), wh_total: r32(0x11B),
     charging_state: DCC_STATE[st] ?? `不明(${st})`,
@@ -283,7 +291,14 @@ class BleDev {
       }
     }
     if (!this.device) { this.modeIdx = this.modeIdx ? 0 : 1; throw lastErr; }
-    this.device.addEventListener("gattserverdisconnected", () => this.onDisconnect());
+    await this.attach(this.device);
+  }
+  // 機器を割り当てて接続。選んだ機器はスロットごとに記憶する（次回の自動接続用）
+  async attach(device) {
+    this.device = device;
+    const token = this.token = {};
+    device.addEventListener("gattserverdisconnected", () => { if (this.token === token) this.onDisconnect(); });
+    remember(this.id, device);
     await this.connect();
   }
   async connect() {
@@ -300,11 +315,14 @@ class BleDev {
     if (this.onConnected) await this.onConnected();
   }
   async onDisconnect() {
+    if (this.reconnecting) return;
+    this.reconnecting = true;
     this.setStatus("再接続中", "warn");
     for (let i = 0; i < 1000; i++) {
       await sleep(Math.min(2000 * 2 ** i, 30000));
-      try { await this.connect(); return; } catch (e) { this.err(e); }
+      try { await this.connect(); this.reconnecting = false; return; } catch (e) { this.err(e); }
     }
+    this.reconnecting = false;
   }
   onNotify(dv) {
     const chunk = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
@@ -383,7 +401,6 @@ for (let i = 0; i < N_BATT; i++) {
   node.id = `lt${i}`; ltBox.appendChild(node);
   const dev = new BleDev({ ...LT_CFG, id: `lt${i}`, label: `LiTime#${i + 1}` });
   dev.ui("no", i + 1);
-  node.querySelector('[data-act="toggle"]').onclick = () => { const e = dev.el("detail"); e.hidden = !e.hidden; };
   LTS.push(dev);
 }
 
@@ -462,7 +479,7 @@ const RG = new BleDev({
   render() {
     const d = this.data; this.el("body").hidden = false;
     this.ui("chg", f2(d.charge_current, 1)); this.ui("state", d.charging_state);
-    this.ui("tbig", d.controller_temp); this.ui("altw", d.alt_power);
+    this.ui("tbig", d.controller_temp); this.ui("genw", d.gen_power); this.ui("gen", `${d.gen_power} W（ソーラー ${d.pv_power} + オルタ ${d.alt_power}）`);
     this.ui("model", d.model || "-"); this.ui("btype", d.battery_type || "-");
     this.ui("bv", `${f2(d.battery_voltage, 1)} V`);
     this.ui("alt", `${f2(d.alt_voltage, 1)} V  ${f2(d.alt_current)} A  ${d.alt_power} W`);
@@ -476,17 +493,80 @@ const RG = new BleDev({
   },
 });
 
+
+// ---- 記憶と自動接続 ----
+// navigator.bluetooth.getDevices() に対応したブラウザでのみ、ページを開いた時点で前回の機器へ自動接続する。
+// 非対応なら「まとめて接続」ボタン1つで全スロットの選択画面を順に出す。
+const STORE_KEY = "vanmon.slots.v1";
+function loadSlots() { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch (_) { return {}; } }
+function remember(slot, device) {
+  try { const m = loadSlots(); m[slot] = { id: device.id, name: device.name || "" }; localStorage.setItem(STORE_KEY, JSON.stringify(m)); } catch (_) {}
+}
+function forget(slot) { try { const m = loadSlots(); delete m[slot]; localStorage.setItem(STORE_KEY, JSON.stringify(m)); } catch (_) {} }
+
+async function autoConnect() {
+  const slots = loadSlots(), devs = [...LTS, RG];
+  const known = Object.keys(slots).length;
+  const bt = navigator.bluetooth;
+  if (!bt) { setAutoNote("このブラウザは Web Bluetooth 非対応"); return; }
+  if (!bt.getDevices) {
+    setAutoNote(known ? "このブラウザは自動接続(getDevices)非対応 →「まとめて接続」を押してください" : "");
+    log("getDevices: 非対応");
+    return;
+  }
+  let list = [];
+  try { list = await bt.getDevices(); } catch (e) { log("getDevices失敗: " + describe(e)); setAutoNote("自動接続に失敗 →「まとめて接続」"); return; }
+  log(`getDevices: ${list.length}台 (${list.map(d => d.name).join(", ")})`);
+  if (!known) return;
+  setAutoNote("自動接続中…");
+  for (const dev of devs) {
+    const m = slots[dev.id]; if (!m) continue;
+    const d = list.find(x => x.id === m.id) || list.find(x => m.name && x.name === m.name);
+    if (!d) { dev.setStatus("未許可", ""); continue; }
+    dev.ui("name", d.name || m.name);
+    try { await dev.attach(d); await dev.tick(); renderBank(); }
+    catch (e) {
+      // 圏外・スリープ中は watchAdvertisements で広告を待ってから接続（対応している場合のみ）
+      log(`${dev.label} 自動接続失敗: ${describe(e)}`);
+      if (d.watchAdvertisements) {
+        d.addEventListener("advertisementreceived", () => { if (!dev.ready) dev.onDisconnect(); }, { once: true });
+        try { await d.watchAdvertisements(); } catch (_) { dev.onDisconnect(); }
+      } else dev.onDisconnect();
+    }
+    await sleep(300);
+  }
+  setAutoNote("");
+}
+function setAutoNote(t) { const e = document.getElementById("autonote"); e.textContent = t; e.hidden = !t; }
+
+// 未接続スロットの選択画面を順に出す（ブラウザがユーザー操作1回で複数回の選択を許す場合）
+async function connectAll() {
+  const order = [...LTS, RG].filter(d => !d.ready);
+  for (const dev of order) {
+    const before = !!dev.ready;
+    await connectDev(dev);
+    if (!dev.ready && !before) {
+      log(`${dev.label}: 選択されなかった/失敗 → 続きは「まとめて接続」を再度押してください`);
+      break;
+    }
+  }
+}
+
 // ===== UI 配線 =====
 async function connectDev(dev) {
   if (!navigator.bluetooth) { dev.err("このブラウザは Web Bluetooth 非対応です（Bluefy で開いてください）"); return; }
   try {
     await dev.pick();
     const dup = LTS.find(o => o !== dev && o.device && o.device.id === dev.device.id && o.ready);
-    if (dup) { dev.err(`このバッテリーは既に ${dup.label} で接続済みです`); return; }
+    if (dup) { forget(dev.id); dev.token = null; dev.device = null; dev.nch = null; dev.setStatus("未接続");
+      dev.err(`このバッテリーは既に ${dup.label} で接続済みです`); return; }
     dev.tick(); renderBank();
   } catch (e) { dev.err(e); dev.setStatus("未接続"); document.getElementById("logbox").open = true; document.getElementById("ltwrap").open = dev.id.startsWith("lt"); }
 }
 for (const dev of [...LTS, RG]) document.querySelector(`#${dev.id} [data-act="connect"]`).onclick = () => connectDev(dev);
+document.getElementById("allbtn").onclick = () => connectAll();
+for (const dev of LTS) document.querySelector(`#${dev.id} [data-act="forget"]`).onclick = () => {
+  forget(dev.id); log(`${dev.label} の記憶を消去`); };
 document.querySelector('#bank [data-act="add"]').onclick = () => {
   const free = LTS.find(d => !d.device);
   if (free) connectDev(free); else log("全スロット使用中。個別カードの「接続」で選び直してください");
@@ -500,7 +580,7 @@ document.querySelector('#rg [data-act="id"]').onclick = () => {
 
 const CSV_HEAD = "time,bank_n,bank_soc,bank_v,bank_a,bank_w,bank_remain_ah," +
   Array.from({ length: N_BATT }, (_, i) => `b${i+1}_soc,b${i+1}_v,b${i+1}_a,b${i+1}_cell_t,b${i+1}_delta_mv,b${i+1}_code`).join(",") +
-  ",rg_state,rg_bv,rg_a,rg_alt_v,rg_alt_a,rg_alt_w,rg_pv_v,rg_pv_a,rg_pv_w,rg_ctrl_t,rg_alarm";
+  ",rg_state,rg_gen_w,rg_bv,rg_a,rg_alt_v,rg_alt_a,rg_alt_w,rg_pv_v,rg_pv_a,rg_pv_w,rg_ctrl_t,rg_alarm";
 const csvRows = [];
 function addCsv() {
   const now = Date.now(), iv = intervalMs() * 3;
@@ -509,7 +589,7 @@ function addCsv() {
   const B = b ? [b.n, b.soc.toFixed(1), b.voltage.toFixed(3), b.current.toFixed(2), b.power.toFixed(1), b.remain_ah.toFixed(2)] : Array(6).fill("");
   const L = LTS.flatMap(d => { const x = d.data && now - d.updated < iv ? d.data : null;
     return x ? [x.soc, x.voltage, x.current, x.cell_temp, x.cell_delta_mv, x.problem_code] : Array(6).fill(""); });
-  const R = r ? [r.charging_state, r.battery_voltage, r.charge_current, r.alt_voltage, r.alt_current, r.alt_power, r.pv_voltage, r.pv_current, r.pv_power, r.controller_temp, r.alarm_raw] : Array(11).fill("");
+  const R = r ? [r.charging_state, r.gen_power, r.battery_voltage, r.charge_current, r.alt_voltage, r.alt_current, r.alt_power, r.pv_voltage, r.pv_current, r.pv_power, r.controller_temp, r.alarm_raw] : Array(12).fill("");
   csvRows.push([new Date(now).toISOString(), ...B, ...L, ...R].join(","));
   if (csvRows.length > 20000) csvRows.shift();
   document.getElementById("csvn").textContent = csvRows.length;
@@ -527,6 +607,7 @@ document.getElementById("wakebtn").onclick = async e => {
   catch (err) { e.currentTarget.textContent = "非対応"; log("wakeLock: " + err.message); }
 };
 
+autoConnect();
 const intervalMs = () => Number(document.getElementById("interval").value) * 1000;
 (async function loop() {
   for (;;) {
