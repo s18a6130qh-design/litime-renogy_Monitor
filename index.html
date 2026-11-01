@@ -40,6 +40,14 @@
   details { margin-top:8px; color:var(--dim); font-size:12px; }
   pre { white-space:pre-wrap; word-break:break-all; font-size:11px; max-height:200px; overflow:auto; margin:6px 0 0; }
   .note { color:var(--dim); font-size:12px; }
+  .tiles { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:4px 0 10px; }
+  .tiles > div { background:#20242b; border-radius:10px; padding:8px 10px; }
+  .tiles .k { display:block; color:var(--dim); font-size:12px; }
+  .tiles .v { font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .tiles .v.small { font-size:22px; }
+  .tiles .u { font-size:14px; color:var(--dim); margin-left:3px; }
+  details.card > summary { cursor:pointer; color:var(--dim); }
+  #ltwrap .card { margin:10px 0 0; background:#14171b; }
   .tbl { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; font-variant-numeric:tabular-nums; }
   .tbl th { color:var(--dim); font-weight:normal; text-align:right; padding:2px 4px; border-bottom:1px solid var(--line); }
   .tbl td { text-align:right; padding:3px 4px; }
@@ -56,10 +64,11 @@
     <span class="badge" data-f="count">0台</span>
   </div>
   <div data-f="body" hidden>
-    <div class="big">
-      <span><span class="v" data-f="soc">-</span><span class="u">%</span></span>
-      <span><span class="v" data-f="power">-</span><span class="u">W</span></span>
-      <span><span class="v" data-f="cur" style="font-size:20px">-</span><span class="u">A</span></span>
+    <div class="tiles">
+      <div><span class="k">SOC</span><span class="v" data-f="soc">-</span><span class="u">%</span></div>
+      <div><span class="k">内部温度（最高）</span><span class="v" data-f="tbig">-</span><span class="u">℃</span></div>
+      <div><span class="k">電力</span><span class="v" data-f="power">-</span><span class="u">W</span></div>
+      <div><span class="k">電流</span><span class="v" data-f="cur">-</span><span class="u">A</span></div>
     </div>
     <div class="bar"><div data-f="socbar"></div></div>
     <div class="grid">
@@ -72,10 +81,46 @@
     <table class="tbl" data-f="table"></table>
   </div>
   <div class="row" style="margin-top:8px"><button data-act="add">＋ バッテリーを接続</button></div>
-  <p class="note" style="margin:6px 0 0">1台ずつ選んで接続（最大 <span data-f="max"></span> 台）。各台の詳細は下のカード。</p>
+  <p class="note" style="margin:6px 0 0">1台ずつ選んで接続（最大 <span data-f="max"></span> 台）。各台の詳細は下の「各バッテリーの詳細」。</p>
 </div>
 
-<div id="lts"></div>
+<div class="card" id="rg">
+  <div class="head">
+    <span class="title">⚡ Renogy DCC <span class="note" data-f="name"></span></span>
+    <span class="badge" data-f="status">未接続</span>
+  </div>
+  <div class="row">
+    <button data-act="connect">接続</button>
+    <button class="sub" data-act="id">ID: <span data-f="devid">255</span></button>
+  </div>
+  <div data-f="body" hidden>
+    <div class="tiles">
+      <div><span class="k">充電電流</span><span class="v" data-f="chg">-</span><span class="u">A</span></div>
+      <div><span class="k">本体温度</span><span class="v" data-f="tbig">-</span><span class="u">℃</span></div>
+      <div><span class="k">状態</span><span class="v small" data-f="state">-</span></div>
+      <div><span class="k">オルタ入力</span><span class="v" data-f="altw">-</span><span class="u">W</span></div>
+    </div>
+    <div class="grid">
+      <span class="k">型番</span><span class="v" data-f="model">-</span>
+      <span class="k">バッテリー電圧</span><span class="v" data-f="bv">-</span>
+      <span class="k">オルタネータ</span><span class="v" data-f="alt">-</span>
+      <span class="k">ソーラー</span><span class="v" data-f="pv">-</span>
+      <span class="k">温度 本体 / 電池</span><span class="v" data-f="temp">-</span>
+      <span class="k">本日 Ah / Wh</span><span class="v" data-f="today">-</span>
+      <span class="k">本日 Vmin / Vmax</span><span class="v" data-f="vminmax">-</span>
+      <span class="k">累計 Ah / Wh</span><span class="v" data-f="total">-</span>
+      <span class="k">電池種別</span><span class="v" data-f="btype">-</span>
+      <span class="k">アラーム</span><span class="v" data-f="alarm">-</span>
+    </div>
+  </div>
+  <div class="err" data-f="error"></div>
+</div>
+
+<details class="card" id="ltwrap">
+  <summary class="title">各バッテリーの詳細</summary>
+  <div id="lts"></div>
+</details>
+
 <template id="lt-tmpl"><div class="card lt">
   <div class="head">
     <span class="title">🔋 #<span data-f="no"></span> <span class="note" data-f="name"></span></span>
@@ -106,35 +151,6 @@
   <div class="err" data-f="error"></div>
 </div></template>
 
-<div class="card" id="rg">
-  <div class="head">
-    <span class="title">⚡ Renogy DCC <span class="note" data-f="name"></span></span>
-    <span class="badge" data-f="status">未接続</span>
-  </div>
-  <div class="row">
-    <button data-act="connect">接続</button>
-    <button class="sub" data-act="id">ID: <span data-f="devid">255</span></button>
-  </div>
-  <div data-f="body" hidden>
-    <div class="big">
-      <span><span class="v" data-f="chg">-</span><span class="u">A 充電</span></span>
-      <span><span class="v" data-f="state" style="font-size:20px">-</span></span>
-    </div>
-    <div class="grid">
-      <span class="k">型番</span><span class="v" data-f="model">-</span>
-      <span class="k">バッテリー電圧</span><span class="v" data-f="bv">-</span>
-      <span class="k">オルタネータ</span><span class="v" data-f="alt">-</span>
-      <span class="k">ソーラー</span><span class="v" data-f="pv">-</span>
-      <span class="k">温度 本体 / 電池</span><span class="v" data-f="temp">-</span>
-      <span class="k">本日 Ah / Wh</span><span class="v" data-f="today">-</span>
-      <span class="k">本日 Vmin / Vmax</span><span class="v" data-f="vminmax">-</span>
-      <span class="k">累計 Ah / Wh</span><span class="v" data-f="total">-</span>
-      <span class="k">電池種別</span><span class="v" data-f="btype">-</span>
-      <span class="k">アラーム</span><span class="v" data-f="alarm">-</span>
-    </div>
-  </div>
-  <div class="err" data-f="error"></div>
-</div>
 
 <div class="card">
   <div class="row">
@@ -144,11 +160,11 @@
     <button class="sub" id="csvbtn">CSVをコピー (<span id="csvn">0</span>行)</button>
     <button class="sub" id="wakebtn">画面を消さない</button>
   </div>
-  <details><summary>受信ログ（解析確認用）</summary>
+  <details id="logbox"><summary>受信ログ（解析確認用）</summary>
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v3 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v4 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -355,6 +371,8 @@ const LT_CFG = {
     renderBank();
   },
 };
+// 表示色の目安: LiFePO4 は一般に 0℃未満の充電不可・高温で劣化が進むため（しきい値は表示用の目安）
+const tempColor = t => t == null ? "inherit" : t < 0 ? "var(--blue)" : t >= 45 ? "var(--red)" : t >= 40 ? "var(--yellow)" : "inherit";
 const socColor = soc => soc < 20 ? "var(--red)" : soc < 40 ? "var(--yellow)" : "var(--green)";
 const fmtH = h => h == null ? "-" : `${Math.floor(h)}h ${String(Math.round((h % 1) * 60)).padStart(2, "0")}m`;
 
@@ -408,6 +426,7 @@ function renderBank() {
   bankEl("etak").textContent = b.eta_kind || "残り時間";
   bankEl("eta").textContent = fmtH(b.eta_h);
   bankEl("temp").textContent = `${b.t_min} / ${b.t_max} ℃`;
+  bankEl("tbig").textContent = b.t_max; bankEl("tbig").style.color = tempColor(b.t_max);
   bankEl("delta").textContent = `${b.delta_max} mV`;
   const fresh = new Set(bankFresh());
   bankEl("table").innerHTML = "<tr><th>#</th><th>SOC</th><th>V</th><th>A</th><th>電流比</th><th>℃</th></tr>" +
@@ -443,6 +462,7 @@ const RG = new BleDev({
   render() {
     const d = this.data; this.el("body").hidden = false;
     this.ui("chg", f2(d.charge_current, 1)); this.ui("state", d.charging_state);
+    this.ui("tbig", d.controller_temp); this.ui("altw", d.alt_power);
     this.ui("model", d.model || "-"); this.ui("btype", d.battery_type || "-");
     this.ui("bv", `${f2(d.battery_voltage, 1)} V`);
     this.ui("alt", `${f2(d.alt_voltage, 1)} V  ${f2(d.alt_current)} A  ${d.alt_power} W`);
@@ -464,7 +484,7 @@ async function connectDev(dev) {
     const dup = LTS.find(o => o !== dev && o.device && o.device.id === dev.device.id && o.ready);
     if (dup) { dev.err(`このバッテリーは既に ${dup.label} で接続済みです`); return; }
     dev.tick(); renderBank();
-  } catch (e) { dev.err(e); dev.setStatus("未接続"); document.querySelector("details").open = true; }
+  } catch (e) { dev.err(e); dev.setStatus("未接続"); document.getElementById("logbox").open = true; document.getElementById("ltwrap").open = dev.id.startsWith("lt"); }
 }
 for (const dev of [...LTS, RG]) document.querySelector(`#${dev.id} [data-act="connect"]`).onclick = () => connectDev(dev);
 document.querySelector('#bank [data-act="add"]').onclick = () => {
