@@ -83,6 +83,7 @@
       <span class="k" data-f="etak">残り時間</span><span class="v" data-f="eta">-</span>
       <span class="k">温度 最低 / 最高</span><span class="v" data-f="temp">-</span>
       <span class="k">最大セル差</span><span class="v" data-f="delta">-</span>
+      <span class="k">保護・警告</span><span class="v" data-f="warn">-</span>
     </div>
     <table class="tbl" data-f="table"></table>
   </div>
@@ -120,6 +121,15 @@
       <span class="k">アラーム</span><span class="v" data-f="alarm">-</span>
     </div>
   </div>
+  <details id="rgset" style="margin-top:10px">
+    <summary class="note">設定値（読み取りのみ）</summary>
+    <div class="row" style="margin:8px 0">
+      <button class="sub" id="rgsetread">設定を読む</button>
+      <button class="sub" id="rgsetcopy">コピー</button>
+    </div>
+    <p class="note" style="margin:0 0 6px">名称は同社 Rover 充電コントローラのレジスタ表に基づく<b>推定</b>です。DC Home アプリの設定画面の値と照合してください。</p>
+    <table class="tbl" id="rgsettbl"></table>
+  </details>
   <div class="err" data-f="error"></div>
 </div>
 
@@ -151,8 +161,11 @@
       <span class="k">温度 セル / BMS</span><span class="v" data-f="temp">-</span>
       <span class="k">セル差</span><span class="v" data-f="delta">-</span>
       <span class="k">SOH / サイクル</span><span class="v" data-f="soh">-</span>
-      <span class="k">ヒーター / バランサ</span><span class="v" data-f="heat">-</span>
-      <span class="k">problem_code</span><span class="v" data-f="code">-</span>
+      <span class="k">BMS状態</span><span class="v" data-f="bstate">-</span>
+      <span class="k">保護</span><span class="v" data-f="prot">-</span>
+      <span class="k">故障フラグ</span><span class="v" data-f="fail">-</span>
+      <span class="k">バランサ</span><span class="v" data-f="bal">-</span>
+      <span class="k">累計放電</span><span class="v" data-f="tdis">-</span>
     </div>
     <div class="cells" data-f="cells"></div>
   </div>
@@ -171,7 +184,7 @@
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v5 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v6 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -203,23 +216,35 @@ function modbusFrameLen(buf) {
 }
 function modbusOk(f) { const c = crc16modbus(f.subarray(0, f.length - 2)); return (f[f.length-2] | (f[f.length-1] << 8)) === c; }
 
+// rubenmuehlhans/litime-ble (ESPHome実装) の定義
+const LT_PROT = { 0x4: "過充電", 0x20: "過放電", 0x40: "充電過電流", 0x80: "放電過電流",
+  0x100: "高温1", 0x200: "高温2", 0x400: "低温1", 0x800: "低温2", 0x4000: "短絡" };
+const LT_STATE = { 0: "放電", 1: "充電", 4: "充電禁止" };
 function parseLitime(f) {
   if (f.length < 100) throw new Error("LiTime frame too short " + f.length);
   const d = new DataView(f.buffer, f.byteOffset, f.byteLength);
   const cells = []; for (let i = 0; i < 16; i++) { const c = d.getUint16(16 + i*2, true); if (c) cells.push(c / 1000); }
   const voltage = d.getUint16(12, true) / 1000, current = d.getInt32(48, true) / 1000;
-  const remain = d.getUint16(62, true) / 100, cap = d.getUint32(64, true) / 100;
+  const remain = d.getUint16(62, true) / 100, cap = d.getUint16(64, true) / 100;   // 64-65 は uint16（chadj / rubenmuehlhans 実装）
   let eta = null, etaKind = "";
   if (current > 0.05 && cap) { eta = Math.max(cap - remain, 0) / current; etaKind = "満充電まで"; }
   else if (current < -0.05) { eta = remain / -current; etaKind = "空まで"; }
-  let code = ""; for (let i = 83; i >= 76; i--) code += f[i].toString(16).padStart(2, "0");
+  const prot = d.getUint32(76, true), fail = d.getUint32(80, true), state = d.getUint16(88, true);
+  const flags68 = d.getUint32(68, true);
+  const protList = Object.entries(LT_PROT).filter(([b]) => prot & Number(b)).map(([, n]) => n);
+  const unknownProt = prot & ~Object.keys(LT_PROT).reduce((a, b) => a | Number(b), 0);
+  if (unknownProt) protList.push(`不明bit 0x${(unknownProt >>> 0).toString(16)}`);
   return {
-    voltage, current, power: voltage * current, soc: d.getUint16(90, true), soh: d.getUint32(92, true),
+    voltage, current, power: voltage * current, soc: d.getUint16(90, true), soh: d.getUint16(92, true),
     remain_ah: remain, capacity_ah: cap, cycles: d.getUint32(96, true),
     cell_temp: d.getInt16(52, true), bms_temp: d.getInt16(54, true), cells,
     cell_delta_mv: cells.length ? Math.round((Math.max(...cells) - Math.min(...cells)) * 1000) : null,
-    heater: d.getUint32(68, true) !== 0, balancer: d.getUint32(84, true),
-    problem_code: code.toUpperCase(), eta_h: eta, eta_kind: etaKind,
+    balancer: d.getUint32(84, true), eta_h: eta, eta_kind: etaKind,
+    prot_flags: prot, prot_list: protList, fail_flags: fail,
+    state_raw: state, state_text: LT_STATE[state] ?? `不明(${state})`,
+    discharge_disabled: (flags68 & 0x80) !== 0, flags68,
+    total_discharge_ah: f.length >= 104 ? d.getUint32(100, true) / 1000 : null,
+    problem_code: (fail >>> 0).toString(16).padStart(8, "0").toUpperCase() + (prot >>> 0).toString(16).padStart(8, "0").toUpperCase(),
   };
 }
 
@@ -370,7 +395,9 @@ const LT_CFG = {
   async poll() { return parseLitime(await this.request(LITIME_REQUEST)); },
   render() {
     const d = this.data; this.el("body").hidden = false;
-    this.ui("summary", `${d.soc}%  ${f2(d.voltage, 2)}V  ${f2(d.current)}A  ${f2(d.power, 0)}W  ${d.cell_temp}℃  Δ${d.cell_delta_mv ?? "-"}mV`);
+    const warn = [...d.prot_list, ...(d.fail_flags ? ["故障"] : []), ...(d.discharge_disabled ? ["放電禁止"] : []), ...(d.state_raw === 4 ? ["充電禁止"] : [])];
+    this.el("summary").innerHTML = `${d.soc}%  ${f2(d.voltage, 2)}V  ${f2(d.current)}A  ${f2(d.power, 0)}W  ${d.cell_temp}℃  Δ${d.cell_delta_mv ?? "-"}mV` +
+      (warn.length ? ` <span class="alarm">⚠ ${warn.join(", ")}</span>` : "");
     this.ui("soc", d.soc); this.el("socbar").style.width = Math.min(d.soc, 100) + "%";
     this.el("socbar").style.background = socColor(d.soc);
     this.ui("power", f2(d.power, 0));
@@ -381,8 +408,13 @@ const LT_CFG = {
     this.ui("temp", `${d.cell_temp} / ${d.bms_temp} ℃`);
     this.ui("delta", `${d.cell_delta_mv ?? "-"} mV`);
     this.ui("soh", `${d.soh} % / ${d.cycles}`);
-    this.ui("heat", `${d.heater ? "ON" : "OFF"} / ${d.balancer}`);
-    this.ui("code", d.problem_code);
+    this.ui("bstate", d.state_text + (d.discharge_disabled ? " / 放電禁止" : ""));
+    const pe = this.el("prot"); pe.textContent = d.prot_list.length ? d.prot_list.join(", ") : "なし";
+    pe.className = "v" + (d.prot_list.length ? " alarm" : "");
+    const fe = this.el("fail"); fe.textContent = d.fail_flags ? `0x${(d.fail_flags >>> 0).toString(16).toUpperCase()}` : "なし";
+    fe.className = "v" + (d.fail_flags ? " alarm" : "");
+    this.ui("bal", d.balancer ? `作動中 (0x${(d.balancer >>> 0).toString(16)})` : "停止");
+    this.ui("tdis", d.total_discharge_ah == null ? "-" : `${f2(d.total_discharge_ah, 1)} Ah`);
     const mx = Math.max(...d.cells), mn = Math.min(...d.cells);
     this.el("cells").innerHTML = d.cells.map(c =>
       `<div style="color:${c === mx && mx !== mn ? "var(--yellow)" : c === mn && mx !== mn ? "var(--blue)" : "inherit"}">${c.toFixed(3)}</div>`).join("");
@@ -445,6 +477,11 @@ function renderBank() {
   bankEl("temp").textContent = `${b.t_min} / ${b.t_max} ℃`;
   bankEl("tbig").textContent = b.t_max; bankEl("tbig").style.color = tempColor(b.t_max);
   bankEl("delta").textContent = `${b.delta_max} mV`;
+  const w = LTS.flatMap((d, i) => { const x = d.data; if (!x) return [];
+    const l = [...x.prot_list, ...(x.fail_flags ? ["故障"] : []), ...(x.discharge_disabled ? ["放電禁止"] : []), ...(x.state_raw === 4 ? ["充電禁止"] : [])];
+    return l.length ? [`#${i + 1}: ${l.join(", ")}`] : []; });
+  bankEl("warn").textContent = w.length ? w.join(" / ") : "なし";
+  bankEl("warn").className = "v" + (w.length ? " alarm" : "");
   const fresh = new Set(bankFresh());
   bankEl("table").innerHTML = "<tr><th>#</th><th>SOC</th><th>V</th><th>A</th><th>電流比</th><th>℃</th></tr>" +
     LTS.map((d, i) => {
@@ -606,6 +643,72 @@ document.getElementById("wakebtn").onclick = async e => {
   try { wakeLock = await navigator.wakeLock.request("screen"); e.currentTarget.textContent = "画面ON維持中"; }
   catch (err) { e.currentTarget.textContent = "非対応"; log("wakeLock: " + err.message); }
 };
+
+
+// ---- Renogy 設定レジスタ（読み取り専用） ----
+// 名称・倍率は Renogy Rover の Modbus 表（floreno/renogy-rover-modbus 等）に基づく推定。DCC 固有の公式表は未確認。
+const V = x => (x / 10).toFixed(1) + " V";
+const RG_SETTINGS = [
+  [0xE001, "不明（Roverでは別用途）", x => String(x)],
+  [0xE002, "電池容量", x => x + " Ah"],
+  [0xE003, "システム電圧（設定/認識）", x => `${x >> 8} V / ${x & 0xFF} V`],
+  [0xE004, "電池種別", x => DCC_BTYPE[x] ?? String(x)],
+  [0xE005, "過電圧保護", V],
+  [0xE006, "充電上限電圧", V],
+  [0xE007, "均等充電電圧", V],
+  [0xE008, "ブースト電圧", V],
+  [0xE009, "フロート電圧", V],
+  [0xE00A, "ブースト復帰電圧", V],
+  [0xE00B, "過放電復帰電圧", V],
+  [0xE00C, "低電圧警告", V],
+  [0xE00D, "過放電電圧", V],
+  [0xE00E, "放電下限電圧", V],
+  [0xE00F, "SOC（上位/下位バイト）", x => `${x >> 8} / ${x & 0xFF}`],
+  [0xE010, "過放電遅延", x => x + " 秒"],
+  [0xE011, "均等充電時間", x => x + " 分"],
+  [0xE012, "ブースト時間", x => x + " 分"],
+  [0xE013, "均等充電間隔", x => x + " 日"],
+  [0xE014, "温度補償係数", x => x + " mV/℃/2V"],
+];
+BleDev.prototype.exclusive = async function (fn) {
+  while (this.busy) await sleep(100);
+  this.busy = true;
+  try { return await fn(); } finally { this.busy = false; }
+};
+let rgSettingsText = "";
+async function readRgSettings() {
+  const tbl = document.getElementById("rgsettbl"), btn = document.getElementById("rgsetread");
+  if (!RG.ready) { tbl.innerHTML = `<tr><td class="alarm">Renogy 未接続</td></tr>`; return; }
+  btn.disabled = true; btn.textContent = "読み取り中…";
+  const vals = new Map();
+  try {
+    await RG.exclusive(async () => {
+      const first = RG_SETTINGS[0][0], n = RG_SETTINGS.length;
+      try {
+        const f = await RG.read(first, n);                      // まとめて読む
+        for (let i = 0; i < n; i++) vals.set(first + i, (f[3 + i * 2] << 8) | f[4 + i * 2]);
+      } catch (e) {
+        log("設定一括読み取り失敗 → 1個ずつ: " + describe(e));   // 未実装レジスタを含むと例外になる機種があるため
+        for (const [reg] of RG_SETTINGS) {
+          try { const f = await RG.read(reg, 1); vals.set(reg, (f[3] << 8) | f[4]); }
+          catch (e2) { vals.set(reg, e2); }
+          await sleep(150);
+        }
+      }
+    });
+  } finally { btn.disabled = false; btn.textContent = "設定を読む"; }
+  const rows = RG_SETTINGS.map(([reg, name, fmt]) => {
+    const v = vals.get(reg), h = "0x" + reg.toString(16).toUpperCase();
+    if (v instanceof Error || v === undefined) return [h, name, "読めず", "", ""];
+    return [h, name, fmt(v), String(v), "0x" + v.toString(16).padStart(4, "0").toUpperCase()];
+  });
+  tbl.innerHTML = "<tr><th>レジスタ</th><th>推定名称</th><th>推定値</th><th>生値</th></tr>" +
+    rows.map(r => `<tr><td>${r[0]}</td><td style="text-align:left">${r[1]}</td><td>${r[2]}</td><td class="note">${r[3]}<br>${r[4]}</td></tr>`).join("");
+  rgSettingsText = [`Renogy settings ${new Date().toISOString()} id=${RG.devId}`, ...rows.map(r => r.join("\t"))].join("\n");
+  log("設定読み取り完了");
+}
+document.getElementById("rgsetread").onclick = () => readRgSettings();
+document.getElementById("rgsetcopy").onclick = e => copyText(rgSettingsText || "未読み取り", e.currentTarget);
 
 autoConnect();
 const intervalMs = () => Number(document.getElementById("interval").value) * 1000;
