@@ -51,6 +51,8 @@
   details.card > summary::before { content:"▶"; float:right; font-size:11px; color:var(--dim); margin:3px 0 0 8px; transition:transform .2s; }
   details.card[open] > summary::before { transform:rotate(90deg); }
   details.lt .head { margin-bottom:2px; }
+  details.fold { margin-top:10px; }
+  details.fold > summary { color:var(--dim); font-size:13px; cursor:pointer; padding:6px 0; border-top:1px solid var(--line); }
   #ltwrap .card { margin:10px 0 0; background:#14171b; }
   .tbl { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; font-variant-numeric:tabular-nums; }
   .tbl th { color:var(--dim); font-weight:normal; text-align:right; padding:2px 4px; border-bottom:1px solid var(--line); }
@@ -85,7 +87,10 @@
       <span class="k">最大セル差</span><span class="v" data-f="delta">-</span>
       <span class="k">保護・警告</span><span class="v" data-f="warn">-</span>
     </div>
-    <table class="tbl" data-f="table"></table>
+    <details id="banktbl" class="fold">
+      <summary>各バッテリー一覧</summary>
+      <table class="tbl" data-f="table"></table>
+    </details>
   </div>
   <div class="row" style="margin-top:8px"><button data-act="add">＋ バッテリーを接続</button></div>
   <p class="note" style="margin:6px 0 0">1台ずつ選んで接続（最大 <span data-f="max"></span> 台）。各台の詳細は下の「各バッテリーの詳細」。</p>
@@ -127,7 +132,7 @@
       <button class="sub" id="rgsetread">設定を読む</button>
       <button class="sub" id="rgsetcopy">コピー</button>
     </div>
-    <p class="note" style="margin:0 0 6px">名称は同社 Rover 充電コントローラのレジスタ表に基づく<b>推定</b>です。DC Home アプリの設定画面の値と照合してください。</p>
+    <p class="note" style="margin:0 0 6px">✓ は DC Home アプリの表示と照合済み。（推定）は同社 Rover のレジスタ表からの推定。未同定は生値のみ。</p>
     <table class="tbl" id="rgsettbl"></table>
   </details>
   <div class="err" data-f="error"></div>
@@ -184,7 +189,7 @@
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v6 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v9 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -648,28 +653,32 @@ document.getElementById("wakebtn").onclick = async e => {
 // ---- Renogy 設定レジスタ（読み取り専用） ----
 // 名称・倍率は Renogy Rover の Modbus 表（floreno/renogy-rover-modbus 等）に基づく推定。DCC 固有の公式表は未確認。
 const V = x => (x / 10).toFixed(1) + " V";
+// 名称：✓ = DC Home アプリの表示と照合済み（DCC50S, 2026-11-01）／それ以外は Rover 表からの推定
+// lithiumUnused: 電池種別が Lithium のとき DC Home で "--" 表示（値は保持されているが使われない）
 const RG_SETTINGS = [
-  [0xE001, "不明（Roverでは別用途）", x => String(x)],
-  [0xE002, "電池容量", x => x + " Ah"],
-  [0xE003, "システム電圧（設定/認識）", x => `${x >> 8} V / ${x & 0xFF} V`],
-  [0xE004, "電池種別", x => DCC_BTYPE[x] ?? String(x)],
-  [0xE005, "過電圧保護", V],
-  [0xE006, "充電上限電圧", V],
-  [0xE007, "均等充電電圧", V],
-  [0xE008, "ブースト電圧", V],
-  [0xE009, "フロート電圧", V],
-  [0xE00A, "ブースト復帰電圧", V],
-  [0xE00B, "過放電復帰電圧", V],
-  [0xE00C, "低電圧警告", V],
-  [0xE00D, "過放電電圧", V],
-  [0xE00E, "放電下限電圧", V],
-  [0xE00F, "SOC（上位/下位バイト）", x => `${x >> 8} / ${x & 0xFF}`],
-  [0xE010, "過放電遅延", x => x + " 秒"],
-  [0xE011, "均等充電時間", x => x + " 分"],
-  [0xE012, "ブースト時間", x => x + " 分"],
-  [0xE013, "均等充電間隔", x => x + " 日"],
-  [0xE014, "温度補償係数", x => x + " mV/℃/2V"],
+  [0xE001, "✓ 最大充電電流", x => (x / 100).toFixed(0) + " A"],
+  [0xE002, "電池容量（推定）", x => x + " Ah"],
+  [0xE003, "システム電圧 設定/認識（推定）", x => `${x >> 8} V / ${x & 0xFF} V`],
+  [0xE004, "✓ バッテリータイプ", x => DCC_BTYPE[x] ?? String(x)],
+  [0xE005, "✓ 過電圧シャットダウン保護", V],
+  [0xE006, "充電上限電圧（推定）", V],
+  [0xE007, "✓ イコライゼーション電圧", V, true],
+  [0xE008, "✓ ブースト電圧", V],
+  [0xE009, "✓ フロート電圧", V, true],
+  [0xE00A, "ブースト復帰電圧（推定）", V],
+  [0xE00B, "✓ 低電圧復帰", V],
+  [0xE00C, "✓ 低電圧警告", V],
+  [0xE00D, "✓ 低電圧切断", V],
+  [0xE00E, "放電下限電圧（推定）", V],
+  [0xE00F, "SOC 上位/下位（推定）", x => `${x >> 8} / ${x & 0xFF}`],
+  [0xE010, "過放電遅延（推定）", x => x + " 秒"],
+  [0xE011, "✓ イコライゼーション時間", x => x + " 分", true],
+  [0xE012, "✓ ブースト充電時間", x => x + " 分"],
+  [0xE013, "✓ 均等充電間隔", x => x + " 日", true],
+  [0xE014, "温度補償係数（推定）", x => x + " mV/℃/2V"],
 ];
+// 未同定（DC Home の「低ソーラー電流シャットダウン」「リチウム活性化」の所在を探すため生値のみ表示）
+const RG_UNKNOWN = Array.from({ length: 0xE02F - 0xE015 + 1 }, (_, i) => 0xE015 + i);
 BleDev.prototype.exclusive = async function (fn) {
   while (this.busy) await sleep(100);
   this.busy = true;
@@ -683,24 +692,30 @@ async function readRgSettings() {
   const vals = new Map();
   try {
     await RG.exclusive(async () => {
-      const first = RG_SETTINGS[0][0], n = RG_SETTINGS.length;
-      try {
-        const f = await RG.read(first, n);                      // まとめて読む
-        for (let i = 0; i < n; i++) vals.set(first + i, (f[3 + i * 2] << 8) | f[4 + i * 2]);
-      } catch (e) {
-        log("設定一括読み取り失敗 → 1個ずつ: " + describe(e));   // 未実装レジスタを含むと例外になる機種があるため
-        for (const [reg] of RG_SETTINGS) {
-          try { const f = await RG.read(reg, 1); vals.set(reg, (f[3] << 8) | f[4]); }
-          catch (e2) { vals.set(reg, e2); }
-          await sleep(150);
+      for (const regs of [RG_SETTINGS.map(r => r[0]), RG_UNKNOWN]) {
+        const first = regs[0], n = regs.length;
+        try {
+          const f = await RG.read(first, n);                    // まとめて読む
+          for (let i = 0; i < n; i++) vals.set(first + i, (f[3 + i * 2] << 8) | f[4 + i * 2]);
+        } catch (e) {
+          log(`設定一括読み取り失敗(0x${first.toString(16)}) → 1個ずつ: ${describe(e)}`);
+          for (const reg of regs) {
+            try { const f = await RG.read(reg, 1); vals.set(reg, (f[3] << 8) | f[4]); }
+            catch (e2) { vals.set(reg, e2); }
+            await sleep(150);
+          }
         }
+        await sleep(300);
       }
     });
   } finally { btn.disabled = false; btn.textContent = "設定を読む"; }
-  const rows = RG_SETTINGS.map(([reg, name, fmt]) => {
+  const lithium = vals.get(0xE004) === 4;
+  const allDefs = [...RG_SETTINGS, ...RG_UNKNOWN.map(r => [r, "未同定", x => String(x)])];
+  const rows = allDefs.map(([reg, name, fmt, lithiumUnused]) => {
     const v = vals.get(reg), h = "0x" + reg.toString(16).toUpperCase();
     if (v instanceof Error || v === undefined) return [h, name, "読めず", "", ""];
-    return [h, name, fmt(v), String(v), "0x" + v.toString(16).padStart(4, "0").toUpperCase()];
+    const shown = lithium && lithiumUnused ? `（${fmt(v)}・Lithiumでは未使用）` : fmt(v);
+    return [h, name, shown, String(v), "0x" + v.toString(16).padStart(4, "0").toUpperCase()];
   });
   tbl.innerHTML = "<tr><th>レジスタ</th><th>推定名称</th><th>推定値</th><th>生値</th></tr>" +
     rows.map(r => `<tr><td>${r[0]}</td><td style="text-align:left">${r[1]}</td><td>${r[2]}</td><td class="note">${r[3]}<br>${r[4]}</td></tr>`).join("");
@@ -710,6 +725,12 @@ async function readRgSettings() {
 document.getElementById("rgsetread").onclick = () => readRgSettings();
 document.getElementById("rgsetcopy").onclick = e => copyText(rgSettingsText || "未読み取り", e.currentTarget);
 
+// 開閉状態を記憶
+for (const id of ["banktbl", "ltwrap", "rgset"]) {
+  const el = document.getElementById(id); if (!el) continue;
+  try { el.open = localStorage.getItem("vanmon.open." + id) === "1"; } catch (_) {}
+  el.addEventListener("toggle", () => { try { localStorage.setItem("vanmon.open." + id, el.open ? "1" : "0"); } catch (_) {} });
+}
 autoConnect();
 const intervalMs = () => Number(document.getElementById("interval").value) * 1000;
 (async function loop() {
