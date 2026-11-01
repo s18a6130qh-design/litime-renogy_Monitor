@@ -59,6 +59,8 @@
   .tbl td { text-align:right; padding:3px 4px; }
   .tbl th:first-child, .tbl td:first-child { text-align:left; }
   .stale { opacity:.45; }
+  .setbox { margin-top:10px; padding:10px; background:#20242b; border-radius:10px; }
+  .setbox button[disabled] { opacity:.4; }
 </style>
 </head>
 <body>
@@ -129,6 +131,28 @@
       <span class="k">電池種別</span><span class="v" data-f="btype">-</span>
       <span class="k">アラーム</span><span class="v" data-f="alarm">-</span>
     </div>
+    <div class="setbox">
+      <div class="head" style="margin:0">
+        <span>最大充電電流 <b id="mcnow">-</b></span>
+        <button class="sub" id="mcedit">変更</button>
+      </div>
+      <div id="mcpanel" hidden>
+        <div class="row" style="align-items:center;margin-top:8px">
+          <button class="sub" data-d="-5">−5</button><button class="sub" data-d="-1">−1</button>
+          <span id="mcnew" style="font-size:26px;font-weight:700;min-width:70px;text-align:center">-</span><span class="note">A</span>
+          <button class="sub" data-d="1">+1</button><button class="sub" data-d="5">+5</button>
+        </div>
+        <p class="note" id="mcrange" style="margin:6px 0"></p>
+        <div class="row">
+          <button id="mcwrite">書き込む</button><button class="sub" id="mccancel">やめる</button>
+        </div>
+        <div id="mcconfirm" hidden style="margin-top:8px;padding:8px;border:1px solid var(--yellow);border-radius:8px">
+          <div id="mcmsg" style="margin-bottom:8px"></div>
+          <div class="row"><button id="mcyes" style="background:var(--yellow)">確定して書き込む</button><button class="sub" id="mcno">戻る</button></div>
+        </div>
+      </div>
+      <div class="note" id="mcresult" style="margin-top:6px"></div>
+    </div>
     <details id="rgset" class="fold">
       <summary>設定値（読み取りのみ）</summary>
       <div class="row" style="margin:8px 0">
@@ -192,7 +216,7 @@
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v10 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v12 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -220,7 +244,12 @@ function modbusRequest(id, reg, words) {
 function modbusFrameLen(buf) {
   if (buf.length < 3) return 0;
   if (buf[1] & 0x80) return buf.length >= 5 ? 5 : 0;
+  if (buf[1] === 0x06 || buf[1] === 0x10) return buf.length >= 8 ? 8 : 0;   // 書き込み応答（エコー）
   const n = 3 + buf[2] + 2; return buf.length >= n ? n : 0;
+}
+function modbusWriteRequest(id, reg, value) {
+  const b = [id, 0x06, reg >> 8, reg & 0xFF, (value >> 8) & 0xFF, value & 0xFF];
+  const c = crc16modbus(b); return new Uint8Array([...b, c & 0xFF, c >> 8]);
 }
 function modbusOk(f) { const c = crc16modbus(f.subarray(0, f.length - 2)); return (f[f.length-2] | (f[f.length-1] << 8)) === c; }
 
@@ -519,7 +548,11 @@ const RG = new BleDev({
       await sleep(300);
       f = await this.read(0xE004, 1);
       const t = (f[3] << 8) | f[4]; this.static.battery_type = DCC_BTYPE[t] ?? String(t);
+      await sleep(300);
+      f = await this.read(0xE001, 1);
+      this.static.max_charge_a = ((f[3] << 8) | f[4]) / 100;
     } catch (e) { log("Renogy static read failed: " + e.message); }
+    renderMaxCur();
   },
   async poll() { return { ...parseDcc(await this.read(0x0100, 35)), ...this.static }; },
   render() {
@@ -661,7 +694,7 @@ const V = x => (x / 10).toFixed(1) + " V";
 // 名称：✓ = DC Home アプリの表示と照合済み（DCC50S, 2026-11-01）／それ以外は Rover 表からの推定
 // lithiumUnused: 電池種別が Lithium のとき DC Home で "--" 表示（値は保持されているが使われない）
 const RG_SETTINGS = [
-  [0xE001, "✓ 最大充電電流", x => (x / 100).toFixed(0) + " A"],
+  [0xE001, "✓ 最大充電電流（変更可）", x => (x / 100).toFixed(0) + " A"],
   [0xE002, "電池容量（推定）", x => x + " Ah"],
   [0xE003, "システム電圧 設定/認識（推定）", x => `${x >> 8} V / ${x & 0xFF} V`],
   [0xE004, "✓ バッテリータイプ", x => DCC_BTYPE[x] ?? String(x)],
@@ -685,7 +718,10 @@ const RG_SETTINGS = [
 // 0xE022-0xE027 は 年/月/日/時/分/秒（UTC）。読み取り時刻（ISO, UTC）と一致したことで照合（2026-11-01）
 const RG_CLOCK = { 0xE022: "✓ 時計 年(UTC)", 0xE023: "✓ 時計 月", 0xE024: "✓ 時計 日", 0xE025: "✓ 時計 時(UTC)", 0xE026: "✓ 時計 分", 0xE027: "✓ 時計 秒" };
 // 未同定（「低ソーラー電流シャットダウン」「リチウム活性化」の所在探し）。90〜170 は電圧(×0.1V)の可能性を併記
-const RG_UNKNOWN = Array.from({ length: 0xE05F - 0xE015 + 1 }, (_, i) => 0xE015 + i);
+// 0xE039 以降は Modbus 例外（存在しない）ため 0xE038 までで打ち切り
+const RG_UNKNOWN = Array.from({ length: 0xE038 - 0xE015 + 1 }, (_, i) => 0xE015 + i);
+// 名前付けできた未同定領域のレジスタ
+const RG_NAMED = { 0xE038: ["低ソーラー電流シャットダウン（推定：DC Home の 7A と値一致）", x => (x / 100).toFixed(2) + " A"] };
 const unknownFmt = x => x >= 90 && x <= 170 ? `${x}（電圧なら ${(x / 10).toFixed(1)} V？）` : String(x);
 BleDev.prototype.exclusive = async function (fn) {
   while (this.busy) await sleep(100);
@@ -718,7 +754,8 @@ async function readRgSettings() {
     });
   } finally { btn.disabled = false; btn.textContent = "設定を読む"; }
   const lithium = vals.get(0xE004) === 4;
-  const allDefs = [...RG_SETTINGS, ...RG_UNKNOWN.map(r => RG_CLOCK[r] ? [r, RG_CLOCK[r], x => String(x)] : [r, "未同定", unknownFmt])];
+  const allDefs = [...RG_SETTINGS, ...RG_UNKNOWN.map(r =>
+    RG_CLOCK[r] ? [r, RG_CLOCK[r], x => String(x)] : RG_NAMED[r] ? [r, ...RG_NAMED[r]] : [r, "未同定", unknownFmt])];
   const rows = allDefs.map(([reg, name, fmt, lithiumUnused]) => {
     const v = vals.get(reg), h = "0x" + reg.toString(16).toUpperCase();
     if (v instanceof Error || v === undefined) return [h, name, "読めず", "", ""];
@@ -732,6 +769,65 @@ async function readRgSettings() {
 }
 document.getElementById("rgsetread").onclick = () => readRgSettings();
 document.getElementById("rgsetcopy").onclick = e => copyText(rgSettingsText || "未読み取り", e.currentTarget);
+
+// ---- 最大充電電流の変更（0xE001、0.01A単位。DC Home の表示と照合済みのレジスタのみ書き込み対象） ----
+const MC_MIN = 10;                       // 下限（DC Home 側の下限は未確認のため保守的に 10A）
+function mcMax() {                        // 型番から上限：RBC50D1S→50A / RBC30D1S→30A / 不明→30A
+  const m = (RG.static.model || "");
+  return /50/.test(m) ? 50 : 30;
+}
+let mcTarget = null;
+function renderMaxCur() {
+  const v = RG.static.max_charge_a;
+  document.getElementById("mcnow").textContent = v == null ? "-" : `${v.toFixed(0)} A`;
+}
+function mcShow() {
+  document.getElementById("mcnew").textContent = mcTarget;
+  document.getElementById("mcrange").textContent = `範囲 ${MC_MIN}〜${mcMax()} A（型番: ${RG.static.model || "不明"}）`;
+  document.getElementById("mcconfirm").hidden = true;
+}
+document.getElementById("mcedit").onclick = () => {
+  if (!RG.ready || RG.static.max_charge_a == null) { document.getElementById("mcresult").textContent = "Renogy 未接続、または現在値を読めていません"; return; }
+  mcTarget = Math.round(RG.static.max_charge_a);
+  document.getElementById("mcpanel").hidden = false; document.getElementById("mcresult").textContent = ""; mcShow();
+};
+document.querySelectorAll("#mcpanel [data-d]").forEach(b => b.onclick = () => {
+  mcTarget = Math.min(mcMax(), Math.max(MC_MIN, mcTarget + Number(b.dataset.d))); mcShow();
+});
+document.getElementById("mccancel").onclick = () => { document.getElementById("mcpanel").hidden = true; };
+document.getElementById("mcno").onclick = () => { document.getElementById("mcconfirm").hidden = true; };
+document.getElementById("mcwrite").onclick = () => {
+  const cur = RG.static.max_charge_a;
+  if (mcTarget === Math.round(cur)) { document.getElementById("mcresult").textContent = "現在値と同じです"; return; }
+  document.getElementById("mcmsg").innerHTML = `最大充電電流を <b>${cur.toFixed(0)} A → ${mcTarget} A</b> に変更します。<br><span class="note">レジスタ 0xE001 に ${mcTarget * 100} を書き込み、書き込み後に読み直して確認します。</span>`;
+  document.getElementById("mcconfirm").hidden = false;
+};
+document.getElementById("mcyes").onclick = async () => {
+  const res = document.getElementById("mcresult"), btn = document.getElementById("mcyes");
+  const target = mcTarget, raw = target * 100;
+  if (!(target >= MC_MIN && target <= mcMax())) { res.textContent = "範囲外のため中止"; return; }   // 二重チェック
+  btn.disabled = true; res.textContent = "書き込み中…";
+  try {
+    await RG.exclusive(async () => {
+      const req = modbusWriteRequest(RG.devId, 0xE001, raw);
+      log(`Renogy WRITE 0xE001=${raw} TX ${hex(req)}`);
+      const f = await RG.request(req);
+      if (f[1] & 0x80) throw new Error(`書き込み拒否（Modbus例外 code=${f[2]}）`);
+      if (f[1] !== 0x06 || ((f[2] << 8) | f[3]) !== 0xE001 || ((f[4] << 8) | f[5]) !== raw) throw new Error("応答が要求と一致しません: " + hex(f));
+      await sleep(500);
+      const r = await RG.read(0xE001, 1);                       // 読み直して反映を確認
+      const now = ((r[3] << 8) | r[4]) / 100;
+      RG.static.max_charge_a = now;
+      if (Math.round(now) !== target) throw new Error(`読み直し値が ${now} A（期待 ${target} A）`);
+    });
+    renderMaxCur();
+    res.innerHTML = `<span style="color:var(--green)">✓ ${target} A に変更し、読み直しで確認しました</span>`;
+    document.getElementById("mcpanel").hidden = true;
+    log(`Renogy 最大充電電流 → ${target} A 確認済み`);
+  } catch (e) {
+    res.innerHTML = `<span class="alarm">失敗: ${describe(e)}</span>`; log("書き込み失敗: " + describe(e));
+  } finally { btn.disabled = false; document.getElementById("mcconfirm").hidden = true; }
+};
 
 // 開閉状態を記憶
 for (const id of ["bankmore", "rgmore", "ltwrap", "rgset"]) {
