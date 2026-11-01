@@ -69,6 +69,15 @@
   .hide-names [data-f="name"] { display:none; }
   .hide-model .modelrow { display:none; }
   .uigrid { display:grid; grid-template-columns:auto 1fr; gap:6px 10px; align-items:center; margin:8px 0; font-size:13px; }
+  .uigrid input.th { width:64px; background:#20242b; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px; font-size:14px; }
+  .tiles > div { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; touch-action:manipulation; }
+  .tiles > div.pressing { outline:2px solid var(--blue); }
+  #picker { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:flex-end; z-index:10; }
+  #picker[hidden] { display:none; }
+  #picker .sheet { background:var(--card); width:100%; border-radius:16px 16px 0 0; padding:14px 14px 28px; max-height:75vh; overflow:auto; }
+  #picker .opts { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
+  #picker .opts button { background:#20242b; color:var(--fg); font-weight:normal; text-align:left; }
+  #picker .opts button.cur { outline:2px solid var(--blue); }
   .uigrid select { width:100%; background:#20242b; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px; font-size:14px; }
   .setbox { margin-top:10px; padding:10px; background:#20242b; border-radius:10px; }
   .setbox button[disabled] { opacity:.4; }
@@ -216,19 +225,30 @@
     <label class="switch-row"><span class="switch"><input type="checkbox" id="wake"><i></i></span>画面を消さない</label>
   </div>
   <details id="uiset" class="fold"><summary>パネルの表示設定</summary>
-    <div class="note" style="margin-top:6px">大きく表示する4枠の中身を選べます（「非表示」で枠を消す）。</div>
+    <div class="note" style="margin-top:6px">大きく表示する4枠の中身を選べます。パネルを長押ししても変更できます。</div>
     <div class="uigrid" id="uisel"></div>
     <label class="switch-row" style="margin:6px 0"><span class="switch"><input type="checkbox" id="shownames"><i></i></span>機器名（Bluetooth名）を表示</label>
     <label class="switch-row" style="margin:6px 0"><span class="switch"><input type="checkbox" id="showmodel"><i></i></span>型番を表示</label>
+    <div class="note" style="margin-top:10px">温度の色（黄 / 赤 になる温度 ℃）</div>
+    <div class="uigrid">
+      <span class="note">バッテリー</span><span><input type="number" class="th" data-k="bat" data-i="0"> / <input type="number" class="th" data-k="bat" data-i="1"></span>
+      <span class="note">DCC 本体</span><span><input type="number" class="th" data-k="dcc" data-i="0"> / <input type="number" class="th" data-k="dcc" data-i="1"></span>
+    </div>
+    <p class="note" style="margin:0">既定値：バッテリー 45/50（LiTime 充電温度上限 50℃）、DCC 65/80（同社 Rover の過熱制御温度からの推定）。</p>
     <button class="sub" id="uireset" style="margin-top:6px">初期設定に戻す</button>
   </details>
   <details id="logbox"><summary>受信ログ（解析確認用）</summary>
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v15 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v16 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
+<div id="picker" hidden><div class="sheet">
+  <div class="head"><span class="title" id="pktitle"></span><button class="sub" id="pkclose">閉じる</button></div>
+  <div class="opts" id="pkopts"></div>
+  <p class="note" style="margin:0">「非表示」にした枠は「パネルの表示設定」から戻せます。</p>
+</div></div>
 <script>
 // <proto> ===== プロトコル（Python版 vanmon.py と同一ロジック） =====
 const U = x => `0000${x.toString(16).padStart(4,"0")}-0000-1000-8000-00805f9b34fb`;
@@ -478,7 +498,14 @@ const LT_CFG = {
   },
 };
 // 表示色の目安: LiFePO4 は一般に 0℃未満の充電不可・高温で劣化が進むため（しきい値は表示用の目安）
-const tempColor = t => t == null ? "inherit" : t < 0 ? "var(--blue)" : t >= 45 ? "var(--red)" : t >= 40 ? "var(--yellow)" : "inherit";
+// 温度の色分けしきい値 [黄, 赤]（表示設定で変更可）
+//  bat: LiTime 12V 320Ah の充電温度範囲 0〜50℃（公式仕様）→ 既定 黄45 / 赤50、0℃未満は青（充電不可域）
+//  dcc: DCC50S の過熱保護温度は公式情報なし。同社 Rover の「放熱板65℃で電流制限・85℃で停止」を参考に既定 黄65 / 赤80（推定）
+const TEMP_TH_DEFAULT = { bat: [45, 50], dcc: [65, 80] };
+const tempColor = (t, kind = "bat") => {
+  const [y, r] = (typeof UI !== "undefined" && UI.temp && UI.temp[kind]) || TEMP_TH_DEFAULT[kind];
+  return t == null ? "inherit" : t < 0 && kind === "bat" ? "var(--blue)" : t >= r ? "var(--red)" : t >= y ? "var(--yellow)" : "inherit";
+};
 const socColor = soc => soc < 20 ? "var(--red)" : soc < 40 ? "var(--yellow)" : "var(--green)";
 const fmtH = h => h == null ? "-" : `${Math.floor(h)}h ${String(Math.round((h % 1) * 60)).padStart(2, "0")}m`;
 
@@ -868,8 +895,8 @@ document.getElementById("mcyes").onclick = async () => {
 const TILE_METRICS = {
   bank: {
     soc:     { label: "SOC", unit: "%", get: b => f2(b.soc, 0) },
-    tmax:    { label: "内部温度（最高）", unit: "℃", get: b => b.t_max, color: b => tempColor(b.t_max) },
-    tmin:    { label: "内部温度（最低）", unit: "℃", get: b => b.t_min, color: b => tempColor(b.t_min) },
+    tmax:    { label: "内部温度（最高）", unit: "℃", get: b => b.t_max, color: b => tempColor(b.t_max, "bat") },
+    tmin:    { label: "内部温度（最低）", unit: "℃", get: b => b.t_min, color: b => tempColor(b.t_min, "bat") },
     power:   { label: "電力", unit: "W", get: b => f2(b.power, 0) },
     current: { label: "電流", unit: "A", get: b => f2(b.current, 1) },
     voltage: { label: "電圧（平均）", unit: "V", get: b => f2(b.voltage, 2) },
@@ -888,14 +915,14 @@ const TILE_METRICS = {
     pvw:     { label: "ソーラー電力", unit: "W", get: d => d.pv_power },
     pvv:     { label: "ソーラー電圧", unit: "V", get: d => f2(d.pv_voltage, 1) },
     bv:      { label: "バッテリー電圧", unit: "V", get: d => f2(d.battery_voltage, 1) },
-    ctemp:   { label: "本体温度", unit: "℃", get: d => d.controller_temp, color: d => tempColor(d.controller_temp) },
-    btemp:   { label: "電池温度（DCC）", unit: "℃", get: d => d.battery_temp },
+    ctemp:   { label: "本体温度", unit: "℃", get: d => d.controller_temp, color: d => tempColor(d.controller_temp, "dcc") },
+    btemp:   { label: "電池温度（DCC）", unit: "℃", get: d => d.battery_temp, color: d => tempColor(d.battery_temp, "bat") },
     state:   { label: "状態", unit: "", get: d => d.charging_state, small: true },
     ahday:   { label: "本日 Ah", unit: "Ah", get: d => d.ah_today },
     maxset:  { label: "最大充電電流 設定", unit: "A", get: () => RG.static.max_charge_a == null ? "-" : RG.static.max_charge_a.toFixed(0) },
   },
 };
-const UI_DEFAULT = { bank: ["soc", "tmax", "power", "current"], rg: ["chg", "ctemp", "state", "gen"], showNames: true, showModel: true };
+const UI_DEFAULT = { bank: ["soc", "tmax", "power", "current"], rg: ["chg", "ctemp", "state", "gen"], showNames: true, showModel: true, temp: TEMP_TH_DEFAULT };
 const UI_KEY = "vanmon.ui.v2";
 let UI = (() => { try {
   const v2 = localStorage.getItem(UI_KEY);
@@ -920,7 +947,16 @@ function renderTiles(card, data) {
   });
   box.hidden = UI[card].every(k => !TILE_METRICS[card][k]);
 }
+function applyTempInputs() {
+  document.querySelectorAll("input.th").forEach(el => { el.value = (UI.temp || TEMP_TH_DEFAULT)[el.dataset.k][Number(el.dataset.i)]; });
+}
+document.querySelectorAll("input.th").forEach(el => el.onchange = () => {
+  const v = Number(el.value); if (!Number.isFinite(v)) return;
+  UI.temp = JSON.parse(JSON.stringify(UI.temp || TEMP_TH_DEFAULT));
+  UI.temp[el.dataset.k][Number(el.dataset.i)] = v; saveUI(); renderTiles("bank"); renderTiles("rg");
+});
 function applyFlags() {
+  applyTempInputs();
   document.body.classList.toggle("hide-names", !UI.showNames);
   document.body.classList.toggle("hide-model", !UI.showModel);
   document.getElementById("shownames").checked = UI.showNames;
@@ -944,6 +980,38 @@ document.getElementById("shownames").onchange = e => { UI.showNames = e.target.c
 document.getElementById("showmodel").onchange = e => { UI.showModel = e.target.checked; saveUI(); applyFlags(); };
 document.getElementById("uireset").onclick = () => { UI = JSON.parse(JSON.stringify(UI_DEFAULT)); saveUI(); buildUiSettings(); renderTiles("bank"); renderTiles("rg"); };
 buildUiSettings(); renderTiles("bank"); renderTiles("rg");
+
+// ---- パネル長押し（0.5秒）で、その枠に表示する項目を選ぶ ----
+function openPicker(card, i) {
+  const title = card === "bank" ? "バンク" : "Renogy";
+  document.getElementById("pktitle").textContent = `${title} 枠${i + 1} の表示`;
+  const opts = document.getElementById("pkopts"); opts.innerHTML = "";
+  for (const [k, m] of [...Object.entries(TILE_METRICS[card]), ["", { label: "（非表示）" }]]) {
+    const b = document.createElement("button");
+    b.textContent = typeof m.label === "function" ? "残り時間" : m.label;
+    if (UI[card][i] === k) b.className = "cur";
+    b.onclick = () => { UI[card][i] = k; saveUI(); renderTiles(card); buildUiSettings(); closePicker(); };
+    opts.appendChild(b);
+  }
+  document.getElementById("picker").hidden = false;
+}
+function closePicker() { document.getElementById("picker").hidden = true; }
+document.getElementById("pkclose").onclick = closePicker;
+document.getElementById("picker").onclick = e => { if (e.target.id === "picker") closePicker(); };
+for (const card of ["bank", "rg"]) {
+  const box = document.querySelector(`[data-tiles="${card}"]`);
+  let timer = null, sx = 0, sy = 0, el = null;
+  const cancel = () => { clearTimeout(timer); timer = null; if (el) el.classList.remove("pressing"); el = null; };
+  box.addEventListener("pointerdown", e => {
+    const t = e.target.closest(".tiles > div"); if (!t) return;
+    el = t; sx = e.clientX; sy = e.clientY; el.classList.add("pressing");
+    const i = [...box.children].indexOf(t);
+    timer = setTimeout(() => { cancel(); openPicker(card, i); }, 500);
+  });
+  box.addEventListener("pointermove", e => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) box.addEventListener(ev, cancel);
+  box.addEventListener("contextmenu", e => e.preventDefault());
+}
 
 // 開閉状態を記憶
 for (const id of ["bankmore", "rgmore", "ltwrap", "rgset", "uiset"]) {
