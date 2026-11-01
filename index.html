@@ -59,6 +59,17 @@
   .tbl td { text-align:right; padding:3px 4px; }
   .tbl th:first-child, .tbl td:first-child { text-align:left; }
   .stale { opacity:.45; }
+  .switch-row { display:flex; align-items:center; gap:8px; font-size:14px; }
+  .switch { position:relative; width:46px; height:28px; flex:none; }
+  .switch input { opacity:0; width:0; height:0; position:absolute; }
+  .switch i { position:absolute; inset:0; background:#3a3f48; border-radius:14px; transition:.2s; }
+  .switch i::after { content:""; position:absolute; left:3px; top:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:.2s; }
+  .switch input:checked + i { background:var(--green); }
+  .switch input:checked + i::after { transform:translateX(18px); }
+  .hide-names [data-f="name"] { display:none; }
+  .hide-model .modelrow { display:none; }
+  .uigrid { display:grid; grid-template-columns:auto 1fr; gap:6px 10px; align-items:center; margin:8px 0; font-size:13px; }
+  .uigrid select { width:100%; background:#20242b; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px; font-size:14px; }
   .setbox { margin-top:10px; padding:10px; background:#20242b; border-radius:10px; }
   .setbox button[disabled] { opacity:.4; }
 </style>
@@ -74,12 +85,7 @@
     <span class="badge" data-f="count">0台</span>
   </div>
   <div data-f="body" hidden>
-    <div class="tiles">
-      <div><span class="k">SOC</span><span class="v" data-f="soc">-</span><span class="u">%</span></div>
-      <div><span class="k">内部温度（最高）</span><span class="v" data-f="tbig">-</span><span class="u">℃</span></div>
-      <div><span class="k">電力</span><span class="v" data-f="power">-</span><span class="u">W</span></div>
-      <div><span class="k">電流</span><span class="v" data-f="cur">-</span><span class="u">A</span></div>
-    </div>
+    <div class="tiles" data-tiles="bank"></div>
     <div class="bar"><div data-f="socbar"></div></div>
   </div>
   <details id="bankmore" class="fold">
@@ -104,12 +110,7 @@
     <span class="badge" data-f="status">未接続</span>
   </div>
   <div data-f="body" hidden>
-    <div class="tiles">
-      <div><span class="k">充電電流</span><span class="v" data-f="chg">-</span><span class="u">A</span></div>
-      <div><span class="k">本体温度</span><span class="v" data-f="tbig">-</span><span class="u">℃</span></div>
-      <div><span class="k">状態</span><span class="v small" data-f="state">-</span></div>
-      <div><span class="k">発電（合計）</span><span class="v" data-f="genw">-</span><span class="u">W</span></div>
-    </div>
+    <div class="tiles" data-tiles="rg"></div>
   </div>
   <div class="err" data-f="error"></div>
   <details id="rgmore" class="fold">
@@ -119,7 +120,7 @@
       <button class="sub" data-act="id">ID: <span data-f="devid">255</span></button>
     </div>
     <div class="grid">
-      <span class="k">型番</span><span class="v" data-f="model">-</span>
+      <span class="k modelrow">型番</span><span class="v modelrow" data-f="model">-</span>
       <span class="k">バッテリー電圧</span><span class="v" data-f="bv">-</span>
       <span class="k">合計充電電力</span><span class="v" data-f="gen">-</span>
       <span class="k">オルタネータ</span><span class="v" data-f="alt">-</span>
@@ -212,13 +213,20 @@
       <select id="interval"><option>2</option><option selected>5</option><option>10</option><option>30</option></select> 秒
     </label>
     <button class="sub" id="csvbtn">CSVをコピー (<span id="csvn">0</span>行)</button>
-    <button class="sub" id="wakebtn">画面を消さない</button>
+    <label class="switch-row"><span class="switch"><input type="checkbox" id="wake"><i></i></span>画面を消さない</label>
   </div>
+  <details id="uiset" class="fold"><summary>パネルの表示設定</summary>
+    <div class="note" style="margin-top:6px">大きく表示する4枠の中身を選べます（「非表示」で枠を消す）。</div>
+    <div class="uigrid" id="uisel"></div>
+    <label class="switch-row" style="margin:6px 0"><span class="switch"><input type="checkbox" id="shownames"><i></i></span>機器名（Bluetooth名）を表示</label>
+    <label class="switch-row" style="margin:6px 0"><span class="switch"><input type="checkbox" id="showmodel"><i></i></span>型番を表示</label>
+    <button class="sub" id="uireset" style="margin-top:6px">初期設定に戻す</button>
+  </details>
   <details id="logbox"><summary>受信ログ（解析確認用）</summary>
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">v13 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v15 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
@@ -382,7 +390,10 @@ class BleDev {
     await this.nch.startNotifications();
     this.setStatus("接続", "ok");
     this.ui("name", this.device.name || "");
-    if (this.onConnected) await this.onConnected();
+    if (this.onConnected) {
+      this.busy = true;                       // 定期読み取り(tick)と同時に要求を出さない
+      try { await this.onConnected(); } finally { this.busy = false; }
+    }
   }
   async onDisconnect() {
     if (this.reconnecting) return;
@@ -511,16 +522,13 @@ function renderBank() {
   const b = bankData();
   if (!b) return;
   bankEl("body").hidden = false;
-  bankEl("soc").textContent = f2(b.soc, 0);
   bankEl("socbar").style.width = Math.min(b.soc, 100) + "%"; bankEl("socbar").style.background = socColor(b.soc);
-  bankEl("power").textContent = f2(b.power, 0);
-  bankEl("cur").textContent = f2(b.current, 1);
   bankEl("v").textContent = `${f2(b.voltage, 3)} V / ${b.v_spread_mv} mV`;
   bankEl("ah").textContent = `${f2(b.remain_ah, 1)} / ${f2(b.capacity_ah, 0)} Ah` + (b.n < N_BATT ? `（${b.n}台分）` : "");
   bankEl("etak").textContent = b.eta_kind || "残り時間";
   bankEl("eta").textContent = fmtH(b.eta_h);
   bankEl("temp").textContent = `${b.t_min} / ${b.t_max} ℃`;
-  bankEl("tbig").textContent = b.t_max; bankEl("tbig").style.color = tempColor(b.t_max);
+  renderTiles("bank", b);
   bankEl("delta").textContent = `${b.delta_max} mV`;
   const w = LTS.flatMap((d, i) => { const x = d.data; if (!x) return [];
     const l = [...x.prot_list, ...(x.fail_flags ? ["故障"] : []), ...(x.discharge_disabled ? ["放電禁止"] : []), ...(x.state_raw === 4 ? ["充電禁止"] : [])];
@@ -547,26 +555,34 @@ const RG = new BleDev({
   async read(reg, words) {
     const f = await this.request(modbusRequest(this.devId, reg, words));
     if (f[1] & 0x80) throw new Error(`Modbus例外 reg=0x${reg.toString(16)} code=${f[2]}（IDを変えて試す）`);
+    if (f[1] !== 0x03 || f[2] !== words * 2) throw new Error(`応答の取り違え（reg=0x${reg.toString(16)} 期待${words * 2}B / 受信${f[2]}B）`);
     return f;
   },
-  async onConnected() {
-    try {
-      let f = await this.read(0x000C, 8);
-      this.static.model = new TextDecoder().decode(f.slice(3, 19)).replace(/[\x00\s]+$/g, "").trim();
-      await sleep(300);
-      f = await this.read(0xE004, 1);
-      const t = (f[3] << 8) | f[4]; this.static.battery_type = DCC_BTYPE[t] ?? String(t);
-      await sleep(300);
-      f = await this.read(0xE001, 1);
-      this.static.max_charge_a = ((f[3] << 8) | f[4]) / 100;
-    } catch (e) { log("Renogy static read failed: " + e.message); }
+  // 型番・電池種別・最大充電電流：項目ごとに独立して読み、失敗した項目は poll() で再取得
+  async readStatic() {
+    const items = [
+      ["model", 0x000C, 8, f => { const m = String.fromCharCode(...f.slice(3, 19)).replace(/[\x00\s]+$/g, "").trim();
+        if (!/^[\x21-\x7E][\x20-\x7E]*$/.test(m)) throw new Error("型番が不正な文字列: " + hex(f.slice(3, 19))); return m; }],
+      ["battery_type", 0xE004, 1, f => { const t = (f[3] << 8) | f[4]; return DCC_BTYPE[t] ?? String(t); }],
+      ["max_charge_a", 0xE001, 1, f => ((f[3] << 8) | f[4]) / 100],
+    ];
+    for (const [key, reg, n, conv] of items) {
+      if (this.static[key] != null) continue;
+      try { this.static[key] = conv(await this.read(reg, n)); }
+      catch (e) { log(`Renogy ${key} 読み取り失敗（次回再試行）: ${describe(e)}`); }
+      await sleep(200);
+    }
     renderMaxCur();
   },
-  async poll() { return { ...parseDcc(await this.read(0x0100, 35)), ...this.static }; },
+  async onConnected() { await this.readStatic(); },
+  async poll() {
+    if (this.static.model == null || this.static.battery_type == null || this.static.max_charge_a == null) await this.readStatic();
+    return { ...parseDcc(await this.read(0x0100, 35)), ...this.static };
+  },
   render() {
     const d = this.data; this.el("body").hidden = false;
-    this.ui("chg", f2(d.charge_current, 1)); this.ui("state", d.charging_state);
-    this.ui("tbig", d.controller_temp); this.ui("genw", d.gen_power); this.ui("gen", `${d.gen_power} W（オルタ ${d.alt_power} / ソーラー ${d.pv_power}）`);
+    renderTiles("rg", d);
+    this.ui("gen", `${d.gen_power} W（オルタ ${d.alt_power} / ソーラー ${d.pv_power}）`);
     this.ui("model", d.model || "-"); this.ui("btype", d.battery_type || "-");
     this.ui("bv", `${f2(d.battery_voltage, 1)} V`);
     this.ui("alt", `${f2(d.alt_voltage, 1)} V  ${f2(d.alt_current)} A  ${d.alt_power} W`);
@@ -691,11 +707,20 @@ async function copyText(t, btn) {
 document.getElementById("csvbtn").onclick = e => copyText([CSV_HEAD, ...csvRows].join("\n"), e.currentTarget);
 document.getElementById("logcopy").onclick = e => copyText(logLines.join("\n"), e.currentTarget);
 
+// ---- 画面を消さない（トグル。OS が裏に回した時に解除されるので、表示に戻ったら取り直す） ----
 let wakeLock = null;
-document.getElementById("wakebtn").onclick = async e => {
-  try { wakeLock = await navigator.wakeLock.request("screen"); e.currentTarget.textContent = "画面ON維持中"; }
-  catch (err) { e.currentTarget.textContent = "非対応"; log("wakeLock: " + err.message); }
-};
+const wakeEl = document.getElementById("wake");
+async function setWake(on) {
+  try { localStorage.setItem("vanmon.wake", on ? "1" : "0"); } catch (_) {}
+  if (on) {
+    if (!navigator.wakeLock) { wakeEl.checked = false; log("wakeLock: このブラウザは非対応"); return; }
+    try { wakeLock = await navigator.wakeLock.request("screen"); log("wakeLock: ON"); }
+    catch (e) { wakeEl.checked = false; log("wakeLock 失敗: " + describe(e)); }
+  } else if (wakeLock) { try { await wakeLock.release(); } catch (_) {} wakeLock = null; log("wakeLock: OFF"); }
+}
+wakeEl.onchange = () => setWake(wakeEl.checked);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && wakeEl.checked) setWake(true); });
+try { if (localStorage.getItem("vanmon.wake") === "1") { wakeEl.checked = true; setWake(true); } } catch (_) {}
 
 
 // ---- Renogy 設定レジスタ（読み取り専用） ----
@@ -839,8 +864,89 @@ document.getElementById("mcyes").onclick = async () => {
   } finally { btn.disabled = false; document.getElementById("mcconfirm").hidden = true; }
 };
 
+// ---- パネル（大きい4枠）の表示内容：選択式 ----
+const TILE_METRICS = {
+  bank: {
+    soc:     { label: "SOC", unit: "%", get: b => f2(b.soc, 0) },
+    tmax:    { label: "内部温度（最高）", unit: "℃", get: b => b.t_max, color: b => tempColor(b.t_max) },
+    tmin:    { label: "内部温度（最低）", unit: "℃", get: b => b.t_min, color: b => tempColor(b.t_min) },
+    power:   { label: "電力", unit: "W", get: b => f2(b.power, 0) },
+    current: { label: "電流", unit: "A", get: b => f2(b.current, 1) },
+    voltage: { label: "電圧（平均）", unit: "V", get: b => f2(b.voltage, 2) },
+    remain:  { label: "残量", unit: "Ah", get: b => f2(b.remain_ah, 0) },
+    eta:     { label: b => b.eta_kind || "残り時間", unit: "", get: b => fmtH(b.eta_h), small: true },
+    delta:   { label: "最大セル差", unit: "mV", get: b => b.delta_max },
+    vspread: { label: "台間電圧差", unit: "mV", get: b => b.v_spread_mv },
+  },
+  rg: {
+    chg:     { label: "充電電流", unit: "A", get: d => f2(d.charge_current, 1) },
+    outw:    { label: "充電出力（電圧×電流）", unit: "W", get: d => Math.round(d.battery_voltage * d.charge_current) },
+    gen:     { label: "発電（合計）", unit: "W", get: d => d.gen_power },
+    altw:    { label: "オルタ電力", unit: "W", get: d => d.alt_power },
+    alta:    { label: "オルタ電流", unit: "A", get: d => f2(d.alt_current, 1) },
+    altv:    { label: "オルタ電圧", unit: "V", get: d => f2(d.alt_voltage, 1) },
+    pvw:     { label: "ソーラー電力", unit: "W", get: d => d.pv_power },
+    pvv:     { label: "ソーラー電圧", unit: "V", get: d => f2(d.pv_voltage, 1) },
+    bv:      { label: "バッテリー電圧", unit: "V", get: d => f2(d.battery_voltage, 1) },
+    ctemp:   { label: "本体温度", unit: "℃", get: d => d.controller_temp, color: d => tempColor(d.controller_temp) },
+    btemp:   { label: "電池温度（DCC）", unit: "℃", get: d => d.battery_temp },
+    state:   { label: "状態", unit: "", get: d => d.charging_state, small: true },
+    ahday:   { label: "本日 Ah", unit: "Ah", get: d => d.ah_today },
+    maxset:  { label: "最大充電電流 設定", unit: "A", get: () => RG.static.max_charge_a == null ? "-" : RG.static.max_charge_a.toFixed(0) },
+  },
+};
+const UI_DEFAULT = { bank: ["soc", "tmax", "power", "current"], rg: ["chg", "ctemp", "state", "gen"], showNames: true, showModel: true };
+const UI_KEY = "vanmon.ui.v2";
+let UI = (() => { try {
+  const v2 = localStorage.getItem(UI_KEY);
+  if (v2) return { ...UI_DEFAULT, ...JSON.parse(v2) };
+  const v1 = JSON.parse(localStorage.getItem("vanmon.ui.v1") || "{}");      // 枠の選択だけ引き継ぎ、表示フラグは初期値に戻す
+  return { ...UI_DEFAULT, ...(v1.bank ? { bank: v1.bank } : {}), ...(v1.rg ? { rg: v1.rg } : {}) };
+} catch (_) { return { ...UI_DEFAULT }; } })();
+const saveUI = () => { try { localStorage.setItem(UI_KEY, JSON.stringify(UI)); } catch (_) {} };
+const lastTileData = {};
+function renderTiles(card, data) {
+  if (data) lastTileData[card] = data; else data = lastTileData[card];
+  const box = document.querySelector(`[data-tiles="${card}"]`);
+  if (box.children.length !== 4) box.innerHTML = '<div><span class="k"></span><span class="v"></span><span class="u"></span></div>'.repeat(4);
+  UI[card].forEach((key, i) => {
+    const el = box.children[i], m = TILE_METRICS[card][key];
+    el.hidden = !m; if (!m) return;
+    const [k, v, u] = el.children;
+    k.textContent = typeof m.label === "function" ? (data ? m.label(data) : "") : m.label;
+    v.textContent = data ? (m.get(data) ?? "-") : "-";
+    v.className = "v" + (m.small ? " small" : ""); v.style.color = data && m.color ? m.color(data) : "";
+    u.textContent = m.unit;
+  });
+  box.hidden = UI[card].every(k => !TILE_METRICS[card][k]);
+}
+function applyFlags() {
+  document.body.classList.toggle("hide-names", !UI.showNames);
+  document.body.classList.toggle("hide-model", !UI.showModel);
+  document.getElementById("shownames").checked = UI.showNames;
+  document.getElementById("showmodel").checked = UI.showModel;
+}
+function buildUiSettings() {
+  const box = document.getElementById("uisel"); box.innerHTML = "";
+  for (const [card, title] of [["bank", "バンク"], ["rg", "Renogy"]]) {
+    UI[card].forEach((key, i) => {
+      const lab = document.createElement("span"); lab.className = "note"; lab.textContent = `${title} 枠${i + 1}`;
+      const sel = document.createElement("select");
+      sel.innerHTML = `<option value="">（非表示）</option>` + Object.entries(TILE_METRICS[card]).map(([k, m]) =>
+        `<option value="${k}" ${k === key ? "selected" : ""}>${typeof m.label === "function" ? "残り時間" : m.label}</option>`).join("");
+      sel.onchange = () => { UI[card][i] = sel.value; saveUI(); renderTiles(card); };
+      box.append(lab, sel);
+    });
+  }
+  applyFlags();
+}
+document.getElementById("shownames").onchange = e => { UI.showNames = e.target.checked; saveUI(); applyFlags(); };
+document.getElementById("showmodel").onchange = e => { UI.showModel = e.target.checked; saveUI(); applyFlags(); };
+document.getElementById("uireset").onclick = () => { UI = JSON.parse(JSON.stringify(UI_DEFAULT)); saveUI(); buildUiSettings(); renderTiles("bank"); renderTiles("rg"); };
+buildUiSettings(); renderTiles("bank"); renderTiles("rg");
+
 // 開閉状態を記憶
-for (const id of ["bankmore", "rgmore", "ltwrap", "rgset"]) {
+for (const id of ["bankmore", "rgmore", "ltwrap", "rgset", "uiset"]) {
   const el = document.getElementById(id); if (!el) continue;
   try { el.open = localStorage.getItem("vanmon.open." + id) === "1"; } catch (_) {}
   el.addEventListener("toggle", () => { try { localStorage.setItem("vanmon.open." + id, el.open ? "1" : "0"); } catch (_) {} });
