@@ -114,11 +114,12 @@
     <button class="sub" id="logcopy" style="margin-top:6px">ログをコピー</button>
     <pre id="log"></pre>
   </details>
-  <p class="note">Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
+  <p class="note">v2 · Bluefy 等の Web Bluetooth 対応ブラウザで開いてください。純正アプリは切断しておくこと。LiTime の Bluetooth パスワードが有効だと接続できません。</p>
 </div>
 
 <script>
 // <proto> ===== プロトコル（Python版 vanmon.py と同一ロジック） =====
+const U = x => `0000${x.toString(16).padStart(4,"0")}-0000-1000-8000-00805f9b34fb`;
 const LITIME_REQUEST = new Uint8Array([0x00,0x00,0x04,0x01,0x13,0x55,0xAA,0x17]);
 
 function crc16modbus(b) {
@@ -203,23 +204,45 @@ function log(s) {
   logLines.push(`${t} ${s}`); if (logLines.length > 200) logLines.shift();
   document.getElementById("log").textContent = logLines.slice(-60).join("\n");
 }
+function describe(e) {
+  if (e == null) return String(e);
+  if (typeof e !== "object") return `${typeof e}: ${e}`;
+  const parts = [e.name, e.message, e.code != null ? `code=${e.code}` : ""].filter(Boolean);
+  let j = ""; try { j = JSON.stringify(e); } catch (_) {}
+  return (parts.join(" / ") || String(e)) + (j && j !== "{}" ? ` ${j}` : "");
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 class BleDev {
   constructor(cfg) { Object.assign(this, cfg); this.buf = new Uint8Array(0); this.waiter = null; this.busy = false; this.data = null; this.updated = 0; }
 
   async pick() {
-    this.device = await navigator.bluetooth.requestDevice({ filters: this.filters, optionalServices: this.services });
+    const opt = this.services.map(U);
+    const tries = [
+      ["名前で絞り込み", { filters: this.filters, optionalServices: opt }],
+      ["全機器から選択", { acceptAllDevices: true, optionalServices: opt }],
+    ];
+    // ユーザー操作が必要なブラウザ向けに、失敗したら次回タップは別方式から始める
+    const order = this.modeIdx ? [tries[1], tries[0]] : tries;
+    let lastErr;
+    for (const [label, o] of order) {
+      try { log(`${this.label} requestDevice: ${label}`); this.device = await navigator.bluetooth.requestDevice(o); break; }
+      catch (e) {
+        lastErr = e; log(`${this.label} requestDevice失敗(${label}): ${describe(e)}`);
+        if (e && (e.name === "NotFoundError" && /cancel/i.test(e.message || ""))) throw e;   // ユーザーキャンセル
+      }
+    }
+    if (!this.device) { this.modeIdx = this.modeIdx ? 0 : 1; throw lastErr; }
     this.device.addEventListener("gattserverdisconnected", () => this.onDisconnect());
     await this.connect();
   }
   async connect() {
     this.setStatus("接続中", "warn");
     const server = await this.device.gatt.connect();
-    const wsvc = await server.getPrimaryService(this.writeService);
-    this.wch = await wsvc.getCharacteristic(this.writeChar);
-    const nsvc = this.notifyService === this.writeService ? wsvc : await server.getPrimaryService(this.notifyService);
-    this.nch = await nsvc.getCharacteristic(this.notifyChar);
+    const wsvc = await server.getPrimaryService(U(this.writeService));
+    this.wch = await wsvc.getCharacteristic(U(this.writeChar));
+    const nsvc = this.notifyService === this.writeService ? wsvc : await server.getPrimaryService(U(this.notifyService));
+    this.nch = await nsvc.getCharacteristic(U(this.notifyChar));
     this.nch.addEventListener("characteristicvaluechanged", e => this.onNotify(e.target.value));
     await this.nch.startNotifications();
     this.setStatus("接続", "ok");
@@ -265,14 +288,14 @@ class BleDev {
   el(f) { return document.querySelector(`#${this.id} [data-f="${f}"]`); }
   ui(f, v) { const e = this.el(f); if (e) e.textContent = v; }
   setStatus(t, cls) { const e = this.el("status"); e.textContent = t; e.className = "badge " + (cls || ""); }
-  err(e) { console.error(e); this.ui("error", String(e && e.message || e)); log(`${this.label} ERR ${e && e.message || e}`); }
+  err(e) { console.error(e); const d = describe(e); this.ui("error", d); log(`${this.label} ERR ${d}`); }
 }
 
 const f2 = (x, n = 2) => (x == null || Number.isNaN(x)) ? "-" : Number(x).toFixed(n);
 
 const LT = new BleDev({
   id: "lt", label: "LiTime",
-  filters: [{ namePrefix: "L-" }, { namePrefix: "LT-" }, { namePrefix: "S-" }, { namePrefix: "SS-" }, { services: [0xffe0] }],
+  filters: [{ namePrefix: "L-" }, { namePrefix: "LT-" }, { namePrefix: "S-" }, { namePrefix: "SS-" }, { services: [U(0xffe0)] }],
   services: [0xffe0],
   writeService: 0xffe0, writeChar: 0xffe2, notifyService: 0xffe0, notifyChar: 0xffe1,
   frameLen: litimeFrameLen, frameOk: litimeOk,
@@ -338,7 +361,8 @@ const RG = new BleDev({
 for (const dev of [LT, RG]) {
   document.querySelector(`#${dev.id} [data-act="connect"]`).onclick = async () => {
     if (!navigator.bluetooth) { dev.err("このブラウザは Web Bluetooth 非対応です（Bluefy で開いてください）"); return; }
-    try { await dev.pick(); dev.tick(); } catch (e) { dev.err(e); dev.setStatus("未接続"); }
+    try { await dev.pick(); dev.tick(); }
+    catch (e) { dev.err(e); dev.setStatus("未接続"); document.querySelector("details").open = true; }
   };
 }
 const ids = [255, 1, 96, 16, 17, 32, 48, 97];
